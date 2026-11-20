@@ -1,5 +1,7 @@
 ENV    ?= prod
 TF_DIR := terraform/envs/$(ENV)
+# The control-plane VM: stopped last and started first.
+SERVER_VM ?= k3s-01
 
 # GCX_API_URL and GCX_API_TOKEN come from .env (gitignored, see .env.example).
 # They are handed to Terraform as TF_VAR_* environment variables.
@@ -23,7 +25,7 @@ ANSIBLE_RUN   := docker run --rm -t \
 	-e ANSIBLE_CONFIG=/work/ansible/ansible.cfg \
 	$(ANSIBLE_IMAGE)
 
-.PHONY: status nodes deploy kubectl headlamp headlamp-token check-api ansible-build ping lint-ansible check config init validate plan infra destroy fmt
+.PHONY: stop start status nodes deploy kubectl headlamp headlamp-token check-api ansible-build ping lint-ansible check config init validate plan infra destroy fmt
 
 ansible-build:
 	docker build -t $(ANSIBLE_IMAGE) ansible
@@ -90,6 +92,31 @@ status:
 	| jq -r --argjson ips "$$ips" \
 	  '(["NAME","STATE","PUBLIC_IP"] | @tsv), (.data[]? | [.name, .state, ($$ips[.name] // "-")] | @tsv)' \
 	| column -t -s "$$(printf '\t')"
+
+# Pause all VMs without deleting them: agents first, the server last.
+# Check your provider's pricing: stopped VMs may still be billed for disk and IP.
+stop:
+	@for vm in $$(terraform -chdir=$(TF_DIR) output -json vms | jq -r 'keys[]' | grep -v '^$(SERVER_VM)$$') $(SERVER_VM); do \
+	  printf "stopping %-8s " $$vm; \
+	  curl -s -m 60 -X PUT -H "Authorization: Bearer $$TF_VAR_gcx_api_token" -H "Accept: application/json" \
+	    "$$TF_VAR_gcx_api_url/virtual-machines/$$vm/stop" | jq -r '.message'; \
+	done; echo "Run 'make status' to watch them stop."
+
+# Start all VMs again: the server first (waits until it is Running), then the agents.
+start:
+	@vms="$$(terraform -chdir=$(TF_DIR) output -json vms | jq -r 'keys[]')"; \
+	for vm in $(SERVER_VM) $$(echo "$$vms" | grep -v '^$(SERVER_VM)$$'); do \
+	  printf "starting %-8s " $$vm; \
+	  curl -s -m 60 -X PUT -H "Authorization: Bearer $$TF_VAR_gcx_api_token" -H "Accept: application/json" \
+	    "$$TF_VAR_gcx_api_url/virtual-machines/$$vm/start" | jq -r '.message'; \
+	  if [ "$$vm" = "$(SERVER_VM)" ]; then \
+	    for i in $$(seq 1 24); do \
+	      st=$$(curl -s -m 30 -H "Authorization: Bearer $$TF_VAR_gcx_api_token" -H "Accept: application/json" \
+	        "$$TF_VAR_gcx_api_url/virtual-machines" | jq -r --arg n "$(SERVER_VM)" '.data[]? | select(.name==$$n) | .state'); \
+	      [ "$$st" = "Running" ] && break; echo "  waiting for $(SERVER_VM): $$st"; sleep 10; \
+	    done; \
+	  fi; \
+	done; echo "Run 'make status', then 'make nodes' once they are Running."
 
 init:
 	terraform -chdir=$(TF_DIR) init
