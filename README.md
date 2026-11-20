@@ -1,201 +1,158 @@
 # homelab-infra
 
-Practice project for **Terraform + Ansible** automation, run like a real production setup.
+A practice project for **Terraform**, **Ansible** and **Kubernetes** (k3s), run the way a real
+team would run it: everything is code, and the whole cluster can be destroyed and rebuilt with a
+few commands.
 
-- **Terraform** provisions the infrastructure: one Ubuntu 24.04 VM on Proxmox, created from a cloud-init template.
-- **Ansible** configures everything inside the VM: OS hardening, PostgreSQL, the Node.js API and the Nginx load balancer.
-- **Terraform generates the Ansible inventory**, so the two tools never drift apart.
-- **Cloudflare is optional.** It's only needed where Proxmox sits behind a firewall. On a normal network, everything works directly (see [Network modes](#network-modes)).
+- **Terraform** creates three small VMs (1 CPU, 1 GB RAM each) through the cloud provider's API.
+- **Terraform writes the Ansible inventory**, so the two tools never drift apart.
+- **Ansible** hardens the VMs, installs **k3s** (one server, two agents) and joins them into a cluster.
+  Ansible itself runs in a Docker container, so nothing needs installing on your machine.
+- **Kubernetes** runs what you put in `k8s/`. A web UI ([Headlamp](https://headlamp.dev)) is included.
+
+> **New here?** Open [docs/tutorial.html](docs/tutorial.html) in a browser. It explains every step
+> with diagrams. The same material as text is in [docs/GUIDE.md](docs/GUIDE.md) (concepts) and
+> [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) (each command, the tool it starts, and the file that does the work).
 
 ## Architecture
 
 ```
-                 direct mode:   users ──▶ :80/:443 ──────────────┐
-  cloudflare mode (optional):   users ──▶ Cloudflare ──▶ cloudflared ──┐
-                                                                 │     │
-            ┌──────────────── app-01 (1 VM) ─────────────────────▼─────▼─┐
-            │  Nginx :80/:443                                            │
-            │     ├──▶ api@3001  (Node.js, systemd)                      │
-            │     └──▶ api@3002  (Node.js, systemd)                      │
-            │                    │                                       │
-            │              PostgreSQL :5432 (localhost)                  │
-            └────────────────────────────────────────────────────────────┘
+  you ──make infra──▶ Terraform ──▶ cloud API ──▶ 3 VMs, one private network
+                          └──────▶ ansible/inventories/prod/hosts.yml   (generated)
+
+  you ──make config──▶ Ansible (in Docker) ──SSH──▶  k3s-01   server   control plane
+                                                     k3s-02   agent    worker
+                                                     k3s-03   agent    worker
+
+  you ──make deploy──▶ Ansible ──▶ kubectl apply -R -f k8s/   (runs on the server node)
+  you ──make headlamp──▶ SSH tunnel ──▶ http://localhost:8080
 ```
 
-There is one VM, but it is a member of **three Ansible groups** (`lb`, `app` and `db`). The roles are written as if each group had its own server. To scale out later, add a VM in Terraform and move a group to it; the roles don't need to change.
+Only port 22 (SSH) is open to the internet. The Kubernetes API and web ports stay closed until
+you open them on purpose.
 
 ## Folder structure
 
 ```
 homelab-infra/
-├── Makefile                          # entry point: make up / deploy / rollback / destroy
-├── app/                              # sample Node.js API that gets deployed
+├── Makefile                  # the entry point: every command below
+├── .env.example              # copy to .env and add your API token (.env is gitignored)
+├── docs/                     # tutorial.html, GUIDE.md, WALKTHROUGH.md
+├── k8s/                      # Kubernetes manifests applied by `make deploy`
+│   └── headlamp/helmchart.yaml
 ├── terraform/
-│   ├── modules/vm/                   # reusable Proxmox VM module
-│   │   ├── main.tf                   # proxmox_virtual_environment_vm resource
-│   │   ├── variables.tf              # name, vmid, mac, cpu, mem, pool...
-│   │   ├── outputs.tf                # ip, vmid, name
-│   │   └── versions.tf               # bpg/proxmox provider pin
+│   ├── modules/vm/           # the request for ONE VM (reused three times)
 │   └── envs/prod/
-│       ├── main.tf                   # locals.vms map + module call + inventory file
-│       ├── variables.tf
-│       ├── outputs.tf
-│       ├── providers.tf              # proxmox provider (endpoint = var.proxmox_endpoint)
-│       ├── versions.tf
-│       ├── inventory.tftpl           # template → ansible/inventories/prod/hosts.yml
-│       └── terraform.tfvars.example  # copy to terraform.tfvars (gitignored)
+│       ├── main.tf           # which VMs exist, the shared network, the inventory file
+│       ├── providers.tf      # how to reach the API (URL + token)
+│       ├── variables.tf      # settings you can change
+│       ├── outputs.tf        # public IPs, VM names
+│       └── inventory.tftpl   # template -> ansible/inventories/prod/hosts.yml
 └── ansible/
+    ├── Dockerfile            # the container Ansible runs in (pinned versions)
     ├── ansible.cfg
-    ├── requirements.yml              # collections: community.general, community.postgresql
-    ├── inventories/
-    │   ├── prod/                     # Proxmox VM
-    │   │   ├── hosts.yml             # GENERATED by Terraform, do not edit by hand
-    │   │   └── group_vars/
-    │   │       ├── all/vars.yml      # shared variables
-    │   │       ├── all/vault.yml     # secrets (ansible-vault encrypted)
-    │   │       ├── app.yml           # app_ports, app_version...
-    │   │       ├── db.yml            # db name/user...
-    │   │       └── lb.yml            # nginx settings
-    │   └── staging/                  # local Multipass VM on the Mac, same layout
+    ├── requirements.txt      # Python packages (ansible-core, ansible-lint)
+    ├── requirements.yml      # Ansible collections
+    ├── inventories/prod/
+    │   ├── hosts.yml         # GENERATED by Terraform, do not edit by hand
+    │   └── group_vars/all/vars.yml   # shared settings: k3s version, firewall networks
     ├── playbooks/
-    │   ├── site.yml                  # full configuration of all hosts
-    │   ├── deploy.yml                # rolling release of the app
-    │   ├── rollback.yml              # switch back to the previous release
-    │   └── patch.yml                 # OS updates + reboot if required
+    │   ├── site.yml          # baseline -> k3s server -> k3s agents -> verify
+    │   └── deploy.yml        # send k8s/ to the server and apply it
     └── roles/
-        ├── common/                   # users, SSH hardening, UFW, fail2ban, chrony
-        ├── postgresql/               # install, config, pg_hba, db + user
-        ├── app/                      # releases dir, systemd api@.service, rolling restart
-        │   └── tasks/{main,deploy,restart_one,rollback}.yml
-        ├── nginx_lb/                 # upstream generated from inventory
-        └── cloudflared/              # OPTIONAL: publish the app through Cloudflare Tunnel
+        ├── common/           # admin user, SSH hardening, firewall, swap, fail2ban, chrony
+        ├── k3s_server/       # control plane, join token, kubeconfig
+        ├── k3s_agent/        # workers join the cluster
+        └── docker/           # written but unused: k3s ships its own container runtime
 ```
 
-Every role follows the standard layout:
-
-| Folder | Purpose |
-|---|---|
-| `tasks/` | What the role does |
-| `handlers/` | Restart/reload actions triggered by `notify` |
-| `defaults/` | Default variables (lowest precedence, safe to override) |
-| `templates/` | Jinja2 config files (`*.j2`) |
-| `meta/` | Role info and dependencies |
+Leftovers from an earlier design are still in the tree as empty files and are not used:
+`ansible/roles/{app,cloudflared,nginx_lb,postgresql}`, `ansible/inventories/staging`, the empty
+`group_vars/{app,db,lb}.yml`, and `app/`.
 
 ## Prerequisites
 
-**On your Mac**
-```bash
-brew install terraform ansible ansible-lint tflint multipass
-brew install cloudflared        # only for cloudflare mode
-ansible-galaxy collection install -r ansible/requirements.yml
-```
+- **Terraform** and **Docker** on your machine (Ansible runs in a container).
+- An **API token** from your cloud provider.
+- An **SSH key pair** made for this project:
+  ```bash
+  ssh-keygen -t ed25519 -N '' -C 'homelab-lab' -f ~/.ssh/homelab
+  ```
+- A `.env` file (gitignored). Keep the single quotes: tokens can contain characters like `|`.
+  ```bash
+  cp .env.example .env     # then put your API URL and token in it
+  make check-api           # expect: HTTP 200
+  ```
 
-**On the Proxmox side** (ask the admin if it isn't your server)
-- [ ] Pool `lab-chiev` + an API token limited to that pool
-- [ ] VMID `850`
-- [ ] DHCP reservation for MAC `BC:24:11:85:00:01`, and the reserved IP
-- [ ] Ubuntu 24.04 cloud-init template (name or ID)
-- [ ] *(cloudflare mode only)* WARP private network **or** an SSH bastion hostname in the tunnel
-- [ ] *(cloudflare mode only, optional)* Cloudflare Tunnel token + hostname to publish the app
+## Commands
 
-## Network modes
-
-The code is the same in every mode. Only a few variables change.
-
-| | **Direct** (default) | **Cloudflare** (behind a firewall) |
-|---|---|---|
-| When | Your Mac is on the same network/VPN as Proxmox | Proxmox is only reachable through Cloudflare |
-| Terraform → Proxmox API | `https://<proxmox-ip>:8006` | WARP: same as direct. Bastion: `https://127.0.0.1:8006` via `make tunnel` |
-| Ansible → VM SSH | Direct to the VM IP | WARP: direct. Bastion: `ProxyJump` |
-| Publish the app | Nginx on `:80/:443`, UFW opens 80/443 | Role `cloudflared`, no inbound ports open |
-
-### Switches
-
-| Variable | File | Direct | Cloudflare |
+| Command | Tool | What it does | Changes anything? |
 |---|---|---|---|
-| `proxmox_endpoint` | `terraform/envs/prod/terraform.tfvars` | `https://<proxmox-ip>:8006/` | `https://127.0.0.1:8006/` (bastion) |
-| `ansible_ssh_common_args` | `ansible/inventories/prod/group_vars/all/vars.yml` | *(not set)* | `-o ProxyJump=bastion` (bastion) |
-| `cloudflared_enabled` | `ansible/inventories/prod/group_vars/all/vars.yml` | `false` | `true` |
+| `make check-api` | curl | Proves the API URL and token work | No |
+| `make plan` | Terraform | Previews what would change | No |
+| `make infra` | Terraform | Creates the VMs and writes `hosts.yml` | **Yes (costs money)** |
+| `make status` | curl + Terraform | Lists every VM with its state and IP | No |
+| `make ansible-build` | Docker | Builds the Ansible image (once) | No |
+| `make ping` | Ansible | Can Ansible log in to every VM? | No |
+| `make check` | Ansible | Dry run of `site.yml` | No |
+| `make config` | Ansible | Baseline + k3s on all VMs | **Yes** |
+| `make nodes` | Ansible → kubectl | Shows the Kubernetes nodes | No |
+| `make kubectl ARGS="get pods -A"` | Ansible → kubectl | Runs any kubectl command on the server | Depends |
+| `make deploy` | Ansible → kubectl | Applies everything in `k8s/` | **Yes** |
+| `make headlamp-token` | Ansible → kubectl | Prints a UI login token (valid 8 hours) | No |
+| `make headlamp` | ssh | Tunnel to the UI at `http://localhost:8080` | No |
+| `make lint-ansible` | ansible-lint | Style and safety check | No |
+| `make destroy` | Terraform | Deletes what Terraform created | **Yes** |
 
-- When `cloudflared_enabled: false`, `site.yml` skips the `cloudflared` role, and `common` opens 80/443 in UFW.
-- When it's `true`, the role runs and 80/443 stay closed to everything except localhost.
+Also: `make init`, `make validate`, `make fmt`.
 
-### Cloudflare mode: SSH through a bastion
+## Build it from nothing
 
-If you use WARP, skip this part.
-
-```sshconfig
-# ~/.ssh/config
-Host bastion
-  HostName ssh-pve.name.com
-  User your-user
-  ProxyCommand cloudflared access ssh --hostname %h
-
-Host 192.168.1.*
-  User ubuntu
-  ProxyJump bastion
+```bash
+make plan                 # expect: Plan: 5 to add
+make infra                # type 'yes'. Creates 3 VMs (takes a few minutes)
+make infra                # again, once the VMs are Running: refreshes the IPs in hosts.yml
+make ansible-build        # once
+make ping                 # expect: 3 x pong
+make config               # baseline + k3s; run it twice, the second must say changed=0
+make nodes                # expect: 3 nodes, all Ready
+make deploy               # installs the web UI from k8s/
+make headlamp-token       # copy the token, then:
+make headlamp             # open http://localhost:8080 and paste it
 ```
+
+To tear it down: `make destroy`, then check the cloud console for leftover public IPs or networks.
+VMs are billed by the hour while they exist.
 
 ## Secrets
 
 | Secret | Where | Committed? |
 |---|---|---|
-| Proxmox API token | `terraform/envs/prod/terraform.tfvars` | No (gitignored) |
-| DB password, CF tunnel token (if used) | `ansible/inventories/*/group_vars/all/vault.yml` | Yes, **encrypted** with `ansible-vault` |
-| Vault password | `ansible/.vault_pass` | No (gitignored) |
+| API URL + token | `.env` | No (gitignored) |
+| SSH private key | `~/.ssh/homelab` (mounted read-only into the Ansible container) | Never in the repo |
+| Terraform state | `terraform/envs/prod/terraform.tfstate` | No (gitignored) |
+| Kubeconfig (admin credentials) | `ansible/.ansible/kubeconfig.yaml` | No (gitignored) |
+| Headlamp login token | printed by `make headlamp-token` | Never stored |
 
-```bash
-ansible-vault create ansible/inventories/prod/group_vars/all/vault.yml
-ansible-vault edit   ansible/inventories/prod/group_vars/all/vault.yml
-```
+The Terraform state is local. If you lose it, Terraform forgets the VMs. A team would keep it in shared storage.
 
-## Usage (planned Makefile targets)
+## Status and roadmap
 
-| Command | What it does |
-|---|---|
-| `make tunnel` | *(cloudflare + bastion only)* Open a port-forward to the Proxmox API |
-| `make infra` | `terraform plan` + `apply`, which also writes the inventory |
-| `make config` | Run `site.yml` |
-| `make up` | `infra` + `config`: the whole server from zero |
-| `make check` | `site.yml --check --diff` to detect drift |
-| `make deploy V=1.2.0` | Zero-downtime rolling deploy |
-| `make rollback` | Go back to the previous release |
-| `make lint` | `tflint` + `ansible-lint` |
-| `make destroy` | Delete the VM |
+**Done**
+- [x] Terraform creates 3 VMs in one shared private network, through a REST API
+- [x] Terraform generates the Ansible inventory
+- [x] Ansible runs in a pinned Docker image
+- [x] `common` role: admin user, SSH hardening, firewall, swap, fail2ban, chrony (idempotent)
+- [x] k3s cluster: 1 server + 2 agents, all `Ready`
+- [x] `make deploy` and the Headlamp web UI (through an SSH tunnel)
 
-Use `ENV=staging` to target the local Multipass VM, e.g. `make config ENV=staging`.
-
-## Roadmap
-
-### Week 1: Infrastructure
-- [ ] Get pool, token and IP (and Cloudflare access if needed)
-- [ ] Terraform VM module + prod env
-- [ ] Generate `hosts.yml` from `inventory.tftpl`
-- [ ] `ansible all -m ping` works
-
-### Week 2: Baseline + database
-- [ ] Role `common` (second run gives `changed=0`)
-- [ ] Role `postgresql` + secrets in Vault
-
-### Week 3: App + load balancer
-- [ ] Role `app`: releases dir, `current` symlink, `api@.service`
-- [ ] Rolling restart with drain, health check and `block/rescue` rollback
-- [ ] Role `nginx_lb`: upstream generated from inventory
-- [ ] Publish the app: Nginx on 80/443 (direct) **or** role `cloudflared` with no inbound ports (cloudflare mode)
-
-### Week 4: Day-2 operations
-- [ ] Scale instances (`app_ports: [3001, 3002, 3003]`)
-- [ ] Zero-downtime deploy (curl loop shows no 5xx)
-- [ ] Bad release auto-rollback
-- [ ] Config drift detection with `--check --diff`
-- [ ] OS patching with `patch.yml`
-- [ ] Secret rotation
-- [ ] Full rebuild: `make destroy && make up`
-- [ ] Staging on Multipass → promote to prod
-
-### Later (when more resources are available)
-- [ ] Split `db` onto its own VM
-- [ ] Monitoring: node_exporter, Prometheus, Grafana
-- [ ] Backups: nightly `pg_dump` + restore playbook + DR drill
-- [ ] CI: lint + plan on PR, Molecule role tests
-- [ ] Remote Terraform state (S3-compatible backend)
+**Next**
+- [ ] Open ports 80/443 on one node, restricted to your own IP first, and serve a web app from the cluster
+- [ ] `kubectl` from your laptop (needs port 6443 open to your IP only)
+- [ ] A sample application of your own in `k8s/` (Deployment, Service, Ingress), with a rolling update and a rollback
+- [ ] Failure drill: shut one worker down and watch the pods move
+- [ ] Full rebuild test: `make destroy`, then rebuild everything from the commands above
+- [ ] Secret handling with `ansible-vault` for anything beyond the API token
+- [ ] CI: a GitHub Actions workflow running `terraform fmt/validate` and `ansible-lint` on pull requests
+- [ ] Remote Terraform state in shared storage
+- [ ] Pin `community.general` to a version that supports `ansible-core` 2.18 (it currently prints a warning)
