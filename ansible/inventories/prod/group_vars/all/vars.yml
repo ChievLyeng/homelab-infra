@@ -1,0 +1,19 @@
+---
+# Shared by every host in this environment.
+
+# ---- k3s (Kubernetes) -------------------------------------------------------
+# Pinned on purpose: upgrades should be a deliberate change, not a surprise.
+k3s_version: "v1.37.2+k3s1"
+k3s_install_url: https://get.k3s.io
+# k3s defaults: pods get addresses from the first range, Services from the second.
+k3s_pod_cidr: 10.42.0.0/16
+k3s_service_cidr: 10.43.0.0/16
+
+# ---- Firewall (UFW) ---------------------------------------------------------
+# Nodes trust each other, so traffic from their own private subnet, the pod
+# network and the service network is allowed on every port. Traffic from the
+# internet still only reaches the ports listed in common_ufw_allow_ports.
+common_ufw_allow_from_cidrs:
+  - "{{ ansible_facts['default_ipv4']['network'] }}/{{ ansible_facts['default_ipv4']['prefix'] }}"
+  - "{{ k3s_pod_cidr }}"
+  - "{{ k3s_service_cidr }}"

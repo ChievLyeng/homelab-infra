@@ -1,0 +1,170 @@
+---
+- name: Check required variables
+  ansible.builtin.assert:
+    that:
+      - common_admin_ssh_public_key | length > 0
+    fail_msg: "common_admin_ssh_public_key is empty: regenerate the inventory with Terraform."
+    quiet: true
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ---- Admin user -------------------------------------------------------------
+- name: Create the admin user
+  ansible.builtin.user:
+    name: "{{ common_admin_user }}"
+    groups: sudo
+    append: true
+    shell: /bin/bash
+    create_home: true
+
+- name: Install the admin user's SSH key
+  ansible.posix.authorized_key:
+    user: "{{ common_admin_user }}"
+    key: "{{ common_admin_ssh_public_key }}"
+    state: present
+  # In --check mode the user does not exist yet, so this task cannot run.
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Allow passwordless sudo for the admin user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/90-{{ common_admin_user }}"
+    content: "{{ common_admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+# ---- SSH hardening ----------------------------------------------------------
+# A drop-in named 10-* is read before cloud-init's 50-* file, and sshd keeps the
+# first value it sees for each option.
+- name: Harden sshd (keys only, no root login)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      MaxAuthTries 3
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sshd
+
+- name: Validate the sshd configuration before it is reloaded
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+# ---- Swap -------------------------------------------------------------------
+- name: Create the swap file
+  ansible.builtin.command:
+    cmd: "fallocate -l {{ common_swap_size_mb }}M {{ common_swap_file }}"
+    creates: "{{ common_swap_file }}"
+  register: common_swap_created
+  when: common_swap_enabled | bool
+
+- name: Restrict swap file permissions
+  ansible.builtin.file:
+    path: "{{ common_swap_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when: common_swap_enabled | bool
+  # In --check mode the file is not really created by the previous task.
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Format the swap file
+  ansible.builtin.command: "mkswap {{ common_swap_file }}"
+  changed_when: true
+  when: common_swap_enabled | bool and common_swap_created is changed
+
+- name: Make swap permanent in fstab
+  ansible.posix.mount:
+    path: none
+    src: "{{ common_swap_file }}"
+    fstype: swap
+    opts: sw
+    state: present
+  when: common_swap_enabled | bool
+
+- name: List active swap
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: common_swap_active
+  changed_when: false
+  when: common_swap_enabled | bool
+
+- name: Enable swap
+  ansible.builtin.command: "swapon {{ common_swap_file }}"
+  changed_when: true
+  when: common_swap_enabled | bool and common_swap_file not in common_swap_active.stdout
+
+- name: Prefer RAM over swap
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ common_swappiness }}"
+    state: present
+
+# ---- Firewall (UFW) ---------------------------------------------------------
+# Allow rules first, then the default policy, then enable. SSH is allowed
+# before the firewall turns on so the current session cannot be cut off.
+- name: Allow configured ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | string }}"
+    proto: "{{ item.proto }}"
+  loop: "{{ common_ufw_allow_ports }}"
+
+- name: Allow traffic from trusted networks
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+  loop: "{{ common_ufw_allow_from_cidrs }}"
+
+- name: Default deny incoming
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: Default allow outgoing
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: Enable the firewall
+  community.general.ufw:
+    state: enabled
+
+# ---- fail2ban and time sync -------------------------------------------------
+- name: Configure the fail2ban sshd jail
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/10-sshd.local
+    content: |
+      [sshd]
+      enabled = true
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+  # In --check mode the package is not really installed yet.
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Enable time sync (chrony)
+  ansible.builtin.service:
+    name: chrony
+    state: started
+    enabled: true
+  ignore_errors: "{{ ansible_check_mode }}"

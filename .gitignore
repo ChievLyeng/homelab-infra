@@ -1,0 +1,24 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl.bak
+
+# Secrets: GCX API URL + token live here, never commit
+.env
+!.env.example
+
+# Ansible
+.vault_pass
+*.retry
+ansible/.ansible/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

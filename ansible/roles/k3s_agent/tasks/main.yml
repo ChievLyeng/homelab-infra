@@ -1,0 +1,30 @@
+---
+- name: Check that the server's join token is known
+  ansible.builtin.assert:
+    that:
+      - hostvars[groups['k3s_server'][0]]['k3s_server_node_token'] is defined
+    fail_msg: "No join token: the k3s_server role must run first, in the same playbook run."
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Download the k3s installer
+  ansible.builtin.get_url:
+    url: "{{ k3s_install_url }}"
+    dest: /usr/local/bin/k3s-install.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+# Agents join over the PRIVATE network: the server's private address, port 6443.
+# `creates` makes this run only once: later runs skip it (idempotent).
+- name: Install the k3s agent and join the cluster
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s-install.sh
+    creates: /usr/local/bin/k3s-agent-uninstall.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: "agent --node-ip {{ ansible_facts['default_ipv4']['address'] }}"
+    K3S_URL: "https://{{ hostvars[groups['k3s_server'][0]]['ansible_facts']['default_ipv4']['address'] }}:6443"
+    K3S_TOKEN: "{{ hostvars[groups['k3s_server'][0]]['k3s_server_node_token'] | default('') }}"
+  no_log: true
+  when: not ansible_check_mode

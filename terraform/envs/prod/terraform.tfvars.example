@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored) only if you want to override a default.
+# The API token is NOT set here: export TF_VAR_gcx_api_token (the Makefile does it from ~/.gcx_token).
+
+project  = "my-project"
+region   = "zone"
+template = "ubuntu-2404-lts-new"
+plan     = "basic-1c-1g-35gb"

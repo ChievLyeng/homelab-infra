@@ -1,0 +1,26 @@
+---
+# Admin account created on every host. Ansible can connect as this user instead
+# of the template's default "ubuntu" once it has been verified.
+common_admin_user: devops
+# Public key for common_admin_user. Set by the Terraform-generated inventory.
+common_admin_ssh_public_key: ""
+
+# Swap file: the VMs only have ~1 GB of RAM.
+common_swap_enabled: true
+common_swap_file: /swapfile
+common_swap_size_mb: 1024
+common_swappiness: 10
+
+# Firewall (UFW). Default policy: deny incoming, allow outgoing.
+# Other roles (k3s, ...) add their own ports on top of this list.
+common_ufw_allow_ports:
+  - { port: 22, proto: tcp }
+# Source CIDRs that may reach any port (e.g. the private network between nodes).
+common_ufw_allow_from_cidrs: []
+
+common_packages:
+  - ufw
+  - fail2ban
+  - chrony
+  - curl
+  - ca-certificates

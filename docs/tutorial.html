@@ -1,0 +1,1123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homelab Cluster Tutorial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Design plan
+   Layout: a reading column with a sticky chapter rail. Every tool is colour-coded
+   (Terraform violet, Ansible red, Kubernetes blue) so "who does what" is visible at a glance.
+   Neutrals lean cool-blue; code blocks stay dark in both themes. */
+:root {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f7;
+  --ink: #17202f;
+  --muted: #566176;
+  --line: #dde2ec;
+  --accent: #2f45c5;
+  --accent-ink: #ffffff;
+  --tf: #6b3fb8;
+  --an: #c23030;
+  --k8: #2358d1;
+  --ok: #187a4a;
+  --warn: #9a6200;
+  --bad: #b3261e;
+  --code-bg: #121a2c;
+  --code-fg: #dbe4ff;
+  --code-muted: #8794b8;
+  --font-body: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f131c; --surface: #171c28; --surface-2: #1e2433; --ink: #e5e9f3; --muted: #9ba5bb;
+    --line: #2a3144; --accent: #93a2ff; --accent-ink: #0f131c;
+    --tf: #b595f5; --an: #f08a84; --k8: #84a9ff; --ok: #5cc791; --warn: #e3b25a; --bad: #ff8e86;
+    --code-bg: #0b1020; --code-fg: #dbe4ff; --code-muted: #7d8aae;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f131c; --surface: #171c28; --surface-2: #1e2433; --ink: #e5e9f3; --muted: #9ba5bb;
+  --line: #2a3144; --accent: #93a2ff; --accent-ink: #0f131c;
+  --tf: #b595f5; --an: #f08a84; --k8: #84a9ff; --ok: #5cc791; --warn: #e3b25a; --bad: #ff8e86;
+  --code-bg: #0b1020; --code-fg: #dbe4ff; --code-muted: #7d8aae;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { scroll-behavior: smooth; scroll-padding-top: 1.25rem; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.65 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-underline-offset: 3px; }
+code, pre, kbd { font-family: var(--font-mono); }
+p code, li code, td code, summary code, .callout code {
+  font-size: .86em; background: var(--surface-2); border: 1px solid var(--line);
+  padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere;
+}
+h1, h2, h3 { line-height: 1.2; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font-size: 1.75rem; margin: 0 0 .5rem; }
+h3 { font-size: 1.15rem; margin: 2rem 0 .5rem; }
+p { margin: .6rem 0; max-width: 68ch; }
+ul, ol { padding-left: 1.3rem; max-width: 68ch; }
+li { margin: .3rem 0; }
+
+/* ---- layout ---- */
+.shell {
+  display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 2.5rem;
+  max-width: 1180px; margin: 0 auto;
+  padding-block: 1.5rem 5rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.rail { position: sticky; top: 1.25rem; align-self: start; max-height: calc(100vh - 2.5rem); overflow: auto; }
+.rail-title { font-weight: 700; font-size: .95rem; margin: 0 0 .15rem; }
+.rail-sub { color: var(--muted); font-size: .8rem; margin: 0 0 1rem; }
+.rail ol { list-style: none; padding: 0; margin: 0; border-left: 2px solid var(--line); }
+.rail li { margin: 0; }
+.rail a {
+  display: block; padding: .32rem .8rem; color: var(--muted); text-decoration: none; font-size: .88rem;
+  border-left: 2px solid transparent; margin-left: -2px; border-radius: 0 6px 6px 0;
+}
+.rail a:hover { color: var(--ink); background: var(--surface-2); }
+.rail a.on { color: var(--accent); border-left-color: var(--accent); font-weight: 600; background: var(--surface-2); }
+.rail .grp { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: .9rem .8rem .25rem; margin-left: -2px; }
+.theme-btn {
+  margin-top: 1rem; font: inherit; font-size: .82rem; color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: .4rem .7rem; cursor: pointer;
+}
+.theme-btn:hover { color: var(--ink); border-color: var(--muted); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+main { min-width: 0; }
+section { padding-top: 3rem; }
+section + section { border-top: 1px solid var(--line); margin-top: 3rem; }
+.kicker { font-size: .78rem; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 600; margin: 0 0 .35rem; }
+
+/* ---- hero ---- */
+.hero { padding-top: .5rem; }
+.hero h1 { font-size: clamp(2rem, 4.2vw, 3rem); margin: .2rem 0 1rem; max-width: 18ch; }
+.hero .lede { font-size: 1.12rem; color: var(--muted); max-width: 60ch; }
+.facts { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.25rem 0 0; padding: 0; list-style: none; }
+.facts li { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: .3rem .85rem; font-size: .86rem; }
+.facts b { font-weight: 600; }
+
+/* ---- tool chips ---- */
+.chip {
+  display: inline-block; font-size: .72rem; font-weight: 600; letter-spacing: .03em; padding: .12rem .55rem;
+  border-radius: 999px; border: 1px solid currentColor; vertical-align: .08em; white-space: nowrap;
+}
+.chip.tf { color: var(--tf); background: color-mix(in srgb, var(--tf) 11%, transparent); }
+.chip.an { color: var(--an); background: color-mix(in srgb, var(--an) 11%, transparent); }
+.chip.k8 { color: var(--k8); background: color-mix(in srgb, var(--k8) 11%, transparent); }
+.chip.ot { color: var(--muted); background: var(--surface-2); }
+
+/* ---- figures ---- */
+figure { margin: 1.5rem 0; }
+.fig-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; overflow-x: auto; }
+figure svg { display: block; width: 100%; min-width: 560px; height: auto; color: var(--ink); }
+figcaption { color: var(--muted); font-size: .88rem; margin-top: .55rem; max-width: 70ch; }
+svg text { font-family: var(--font-body); font-size: 13px; fill: currentColor; }
+svg .mono { font-family: var(--font-mono); font-size: 11.5px; }
+svg .small { font-size: 11.5px; fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+svg .ln { stroke: currentColor; stroke-width: 1.5; fill: none; }
+svg .dash { stroke-dasharray: 5 4; }
+svg .tfb { fill: color-mix(in srgb, var(--tf) 14%, var(--surface)); stroke: var(--tf); stroke-width: 1.5; }
+svg .anb { fill: color-mix(in srgb, var(--an) 13%, var(--surface)); stroke: var(--an); stroke-width: 1.5; }
+svg .k8b { fill: color-mix(in srgb, var(--k8) 13%, var(--surface)); stroke: var(--k8); stroke-width: 1.5; }
+svg .badb { fill: color-mix(in srgb, var(--bad) 12%, var(--surface)); stroke: var(--bad); stroke-width: 1.5; }
+svg .tft { fill: var(--tf); font-weight: 600; }
+svg .ant { fill: var(--an); font-weight: 600; }
+svg .k8t { fill: var(--k8); font-weight: 600; }
+svg .badt { fill: var(--bad); font-weight: 600; }
+
+/* ---- code ---- */
+.code { position: relative; margin: 1rem 0; border-radius: 10px; background: var(--code-bg); color: var(--code-fg); overflow: hidden; }
+.code .bar {
+  display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+  padding: .35rem .5rem .35rem .9rem; border-bottom: 1px solid color-mix(in srgb, var(--code-fg) 14%, transparent);
+  font-size: .75rem; color: var(--code-muted); font-family: var(--font-mono);
+}
+.code .bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copy {
+  font: inherit; font-size: .72rem; color: var(--code-fg); background: transparent; cursor: pointer; flex: none;
+  border: 1px solid color-mix(in srgb, var(--code-fg) 28%, transparent); border-radius: 6px; padding: .15rem .55rem;
+}
+.copy:hover { background: color-mix(in srgb, var(--code-fg) 12%, transparent); }
+.code pre { margin: 0; padding: .85rem 1rem; overflow-x: auto; font-size: .84rem; line-height: 1.6; }
+.code pre code { background: none; border: 0; padding: 0; font-size: inherit; border-radius: 0; overflow-wrap: normal; }
+.code .c { color: var(--code-muted); }
+.code .hl { background: color-mix(in srgb, #7c8cff 22%, transparent); display: inline-block; width: 100%; margin: 0 -1rem; padding: 0 1rem; }
+.out { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); }
+.out .bar { color: var(--muted); border-color: var(--line); }
+.out .c { color: var(--muted); }
+
+/* ---- callouts, cards ---- */
+.callout { border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px; background: var(--surface); padding: .7rem 1rem; margin: 1.25rem 0; max-width: 72ch; }
+.callout p { margin: .3rem 0; }
+.callout > b:first-child { display: block; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; }
+.callout.note { border-left-color: var(--accent); } .callout.note > b:first-child { color: var(--accent); }
+.callout.warn { border-left-color: var(--warn); } .callout.warn > b:first-child { color: var(--warn); }
+.callout.ok { border-left-color: var(--ok); } .callout.ok > b:first-child { color: var(--ok); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: .9rem; margin: 1.1rem 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .9rem 1rem; min-width: 0; }
+.card h4 { margin: 0 0 .3rem; font-size: 1rem; }
+.card p { margin: .25rem 0; font-size: .92rem; color: var(--muted); }
+.card.tf { border-top: 3px solid var(--tf); } .card.an { border-top: 3px solid var(--an); } .card.k8 { border-top: 3px solid var(--k8); }
+
+dl.terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; margin: 1.1rem 0; }
+dl.terms div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: .65rem .9rem; min-width: 0; }
+dl.terms dt { font-weight: 600; margin: 0; }
+dl.terms dd { margin: .15rem 0 0; color: var(--muted); font-size: .92rem; }
+
+/* ---- steps ---- */
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 1rem 0; max-width: 72ch; }
+ol.steps > li { counter-increment: s; position: relative; padding: .1rem 0 .1rem 2.6rem; margin: .8rem 0; }
+ol.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: .05rem; width: 1.8rem; height: 1.8rem; border-radius: 50%;
+  display: grid; place-items: center; font-size: .85rem; font-weight: 700; background: var(--accent); color: var(--accent-ink);
+}
+
+/* ---- tables ---- */
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin: 1rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--surface-2); font-size: .76rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); position: sticky; top: 0; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; }
+.yes { color: var(--bad); font-weight: 600; } .no { color: var(--ok); font-weight: 600; }
+
+/* ---- controls ---- */
+.filters { display: flex; flex-wrap: wrap; gap: .45rem; margin: 1rem 0 0; }
+.filters button, .search {
+  font: inherit; font-size: .86rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  border-radius: 999px; padding: .3rem .9rem; cursor: pointer;
+}
+.filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.search { border-radius: 8px; padding: .5rem .8rem; width: min(100%, 360px); cursor: text; margin-top: 1rem; }
+
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin: .7rem 0; }
+details > summary { cursor: pointer; padding: .65rem 1rem; font-weight: 600; list-style: none; display: flex; gap: .6rem; align-items: baseline; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "+"; font-family: var(--font-mono); color: var(--accent); width: 1ch; flex: none; }
+details[open] > summary::before { content: "−"; }
+details > .body { padding: 0 1rem .8rem; }
+details .code { margin: .6rem 0; }
+
+.err { padding: .15rem 0; }
+.err summary .sig { font-family: var(--font-mono); font-size: .85rem; font-weight: 500; overflow-wrap: anywhere; }
+.err dl { margin: 0; display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: .35rem .9rem; font-size: .93rem; }
+.err dt { color: var(--muted); font-weight: 600; } .err dd { margin: 0; }
+
+ul.check { list-style: none; padding: 0; max-width: 72ch; }
+ul.check li { margin: .35rem 0; }
+ul.check label { display: flex; gap: .65rem; align-items: flex-start; cursor: pointer; padding: .4rem .6rem; border-radius: 8px; }
+ul.check label:hover { background: var(--surface-2); }
+ul.check input { margin-top: .3rem; width: 1.05rem; height: 1.05rem; accent-color: var(--accent); flex: none; }
+ul.check input:checked + span { color: var(--muted); text-decoration: line-through; }
+.progress { height: 8px; background: var(--surface-2); border-radius: 99px; overflow: hidden; max-width: 72ch; border: 1px solid var(--line); }
+.progress i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .25s; }
+.pct { font-size: .85rem; color: var(--muted); margin: .35rem 0 1rem; }
+
+footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .88rem; }
+
+/* ---- responsive ---- */
+.menu-toggle { display: none; }
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .rail { position: static; max-height: none; margin-bottom: 1rem; }
+  .rail .rail-body { display: none; }
+  .rail.open .rail-body { display: block; }
+  .menu-toggle { display: inline-block; font: inherit; font-size: .9rem; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: .4rem .8rem; cursor: pointer; margin-top: .4rem; }
+  .err dl { grid-template-columns: minmax(0, 1fr); }
+  .err dt { margin-top: .4rem; }
+  h2 { font-size: 1.5rem; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .progress i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ================= chapter rail ================= -->
+<nav class="rail" id="rail" aria-label="Chapters">
+  <p class="rail-title">Homelab Cluster Tutorial</p>
+  <p class="rail-sub">Terraform · Ansible · k3s</p>
+  <button class="menu-toggle" id="menuBtn" aria-expanded="false" aria-controls="railBody">Chapters</button>
+  <div class="rail-body" id="railBody">
+    <ol>
+      <li class="grp">Ideas</li>
+      <li><a href="#idea">The big picture</a></li>
+      <li><a href="#setup">Before you start</a></li>
+      <li class="grp">Build it</li>
+      <li><a href="#terraform">1 · Create the machines</a></li>
+      <li><a href="#handover">2 · The hand-over</a></li>
+      <li><a href="#ansible">3 · Ansible in a container</a></li>
+      <li><a href="#baseline">4 · Baseline role</a></li>
+      <li><a href="#network">5 · Three nodes, one network</a></li>
+      <li><a href="#k3s">6 · The cluster</a></li>
+      <li><a href="#deploy">7 · Deploy and the UI</a></li>
+      <li class="grp">Reference</li>
+      <li><a href="#commands">Command map</a></li>
+      <li><a href="#flows">How data moves</a></li>
+      <li><a href="#errors">What went wrong</a></li>
+      <li><a href="#routine">Daily routine</a></li>
+      <li><a href="#practice">Practice checklist</a></li>
+    </ol>
+    <button class="theme-btn" id="themeBtn" type="button">Theme: system</button>
+  </div>
+</nav>
+
+<main id="top">
+
+<!-- ================= hero ================= -->
+<header class="hero">
+  <p class="kicker">Hands-on tutorial</p>
+  <h1>A three-node Kubernetes cluster, built from code</h1>
+  <p class="lede">This page replays what we actually did: create three virtual machines with Terraform, configure them with Ansible, start a k3s cluster, and manage it from a web UI. Every step shows the command you run, which tool it starts, and which file does the work.</p>
+  <ul class="facts">
+    <li><b>3</b> small VMs (1 CPU, 1 GB each)</li>
+    <li><b>2</b> tools: Terraform and Ansible</li>
+    <li><b>1</b> command per step: <code>make …</code></li>
+    <li><b>0</b> manual logins to set anything up</li>
+  </ul>
+
+  <figure>
+    <div class="fig-wrap">
+      <svg viewBox="0 0 800 190" role="img" aria-label="Three layers: Terraform creates machines, Ansible configures them, Kubernetes runs applications. Terraform hands Ansible a host list; Ansible installs k3s.">
+        <defs>
+          <marker id="ar1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="tfb" x="10" y="30" width="220" height="100" rx="12"/>
+        <text class="tft" x="120" y="62" text-anchor="middle">Terraform</text>
+        <text x="120" y="84" text-anchor="middle">creates the machines</text>
+        <text class="small" x="120" y="106" text-anchor="middle">“I want 3 VMs of this size”</text>
+
+        <rect class="anb" x="290" y="30" width="220" height="100" rx="12"/>
+        <text class="ant" x="400" y="62" text-anchor="middle">Ansible</text>
+        <text x="400" y="84" text-anchor="middle">sets up the inside</text>
+        <text class="small" x="400" y="106" text-anchor="middle">“harden, install k3s, join”</text>
+
+        <rect class="k8b" x="570" y="30" width="220" height="100" rx="12"/>
+        <text class="k8t" x="680" y="62" text-anchor="middle">Kubernetes (k3s)</text>
+        <text x="680" y="84" text-anchor="middle">runs your applications</text>
+        <text class="small" x="680" y="106" text-anchor="middle">“keep 3 copies running”</text>
+
+        <line class="ln" x1="232" y1="80" x2="288" y2="80" marker-end="url(#ar1)"/>
+        <line class="ln" x1="512" y1="80" x2="568" y2="80" marker-end="url(#ar1)"/>
+        <text class="small mono" x="260" y="156" text-anchor="middle">hosts.yml</text>
+        <text class="small mono" x="540" y="156" text-anchor="middle">k3s installed</text>
+        <text class="small" x="400" y="182" text-anchor="middle">cloud API  →  SSH  →  kubectl</text>
+      </svg>
+    </div>
+    <figcaption>Three layers, one tool each. The arrows are the hand-overs: Terraform writes the host list that Ansible reads, and Ansible installs the cluster that Kubernetes then runs on.</figcaption>
+  </figure>
+</header>
+
+<!-- ================= idea ================= -->
+<section id="idea">
+  <p class="kicker">Ideas</p>
+  <h2>The big picture</h2>
+  <p>Doing this by hand means clicking in a cloud console, logging in to each machine and typing commands. It works once and you can never repeat it exactly. Here every step is written down as code, so you can delete everything and get the same cluster back. That is called <b>infrastructure as code</b>, and it is the point of the project.</p>
+
+  <div class="grid">
+    <div class="card tf"><span class="chip tf">Terraform</span><h4>What should exist</h4>
+      <p>You describe machines in <code>.tf</code> files. Terraform asks the cloud’s API to create them and remembers what it made in a <b>state file</b>.</p></div>
+    <div class="card an"><span class="chip an">Ansible</span><h4>How it is set up</h4>
+      <p>You describe the setup in YAML. Ansible logs in over SSH and makes each machine match, skipping whatever is already right.</p></div>
+    <div class="card k8"><span class="chip k8">Kubernetes</span><h4>What is running</h4>
+      <p>You say “run 3 copies of this app”. Kubernetes keeps that true and restarts copies elsewhere if a machine dies.</p></div>
+  </div>
+
+  <h3>Words you will meet</h3>
+  <dl class="terms">
+    <div><dt>Provider</dt><dd>The plugin that lets Terraform talk to one cloud’s API.</dd></div>
+    <div><dt>State</dt><dd>Terraform’s memory of what it created. Lose it and Terraform forgets your machines.</dd></div>
+    <div><dt>Plan / Apply</dt><dd>Plan previews changes and creates nothing. Apply performs them and costs money.</dd></div>
+    <div><dt>Drift</dt><dd>Reality no longer matches the code, for example someone changed something by hand.</dd></div>
+    <div><dt>Inventory</dt><dd>The list of machines and groups Ansible manages. Terraform generates it here.</dd></div>
+    <div><dt>Role / Playbook</dt><dd>A role is a reusable bundle of tasks. A playbook says which roles run on which machines.</dd></div>
+    <div><dt>Idempotent</dt><dd>Running it again changes nothing if everything is already right.</dd></div>
+    <div><dt>Dry run</dt><dd>Ansible’s <code>--check</code>: shows what would change without changing it.</dd></div>
+    <div><dt>Control plane / agent</dt><dd>The cluster’s brain, and the workers that run your containers.</dd></div>
+    <div><dt>Join token</dt><dd>A secret the server creates so agents can prove they may join.</dd></div>
+  </dl>
+
+  <div class="callout note"><b>A rule to keep</b>
+    <p>If it is about a machine <em>existing</em>, it is <span class="chip tf">Terraform</span>. If it is about what is <em>inside</em> a machine, it is <span class="chip an">Ansible</span>. If it is about what <em>runs on the cluster</em>, it is <span class="chip k8">Kubernetes</span> (the <code>k8s/</code> folder).</p></div>
+</section>
+
+<!-- ================= setup ================= -->
+<section id="setup">
+  <p class="kicker">Ideas</p>
+  <h2>Before you start</h2>
+  <p>Three things must exist before any code runs.</p>
+  <ol class="steps">
+    <li><b>An API token</b> from your cloud provider, saved in a file called <code>.env</code> in the repo. Git ignores that file, so the token never reaches a repository.
+      <div class="code"><div class="bar"><span>.env</span><button class="copy" type="button">Copy</button></div><pre><code>GCX_API_URL='https://api.example-cloud.com/api'
+GCX_API_TOKEN='your-token-here'</code></pre></div>
+      <p>Keep the single quotes: a token can contain characters such as <code>|</code> that a shell would otherwise treat as an operator.</p></li>
+    <li><b>An SSH key pair</b> made just for this project. The private key stays on your machine, the public key is copied to every VM.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>ssh-keygen -t ed25519 -N '' -C 'homelab-lab' -f ~/.ssh/homelab</code></pre></div></li>
+    <li><b>Docker and Terraform</b> installed. Docker runs Ansible in a container, so Ansible itself needs no install.</li>
+  </ol>
+  <p>Prove the connection works before you build anything. This is a single <code>curl</code> call, with no Terraform or Ansible involved:</p>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make check-api</code></pre></div>
+  <div class="code out"><div class="bar"><span>expected</span></div><pre><code>GCX API /projects: HTTP 200</code></pre></div>
+  <p><code>200</code> means the URL and token work. <code>401</code> means a bad token.</p>
+
+  <h3>How the token reaches Terraform</h3>
+  <div class="code"><div class="bar"><span>the path of the token</span></div><pre><code>.env  ──(Makefile)──▶  TF_VAR_gcx_api_token  ──▶  var.gcx_api_token
+                                                  └─▶ providers.tf:  Authorization: "Bearer &lt;token&gt;"</code></pre></div>
+  <p>Terraform turns any environment variable named <code>TF_VAR_name</code> into the variable <code>name</code>. The <code>Makefile</code> reads <code>.env</code> and exports those variables for you.</p>
+</section>
+
+<!-- ================= terraform ================= -->
+<section id="terraform">
+  <p class="kicker">Step 1 <span class="chip tf">Terraform</span></p>
+  <h2>Create the machines</h2>
+  <p>Terraform has no built-in knowledge of any cloud. A <b>provider</b> plugin translates “create a VM” into that cloud’s API calls. The cloud used here has no dedicated provider, so the generic <code>restapi</code> provider sends plain HTTP requests instead.</p>
+
+  <h3>Three files to read first</h3>
+  <details open>
+    <summary><code>terraform/envs/prod/providers.tf</code> <span class="chip tf">how to reach the API</span></summary>
+    <div class="body">
+      <div class="code"><div class="bar"><span>providers.tf</span><button class="copy" type="button">Copy</button></div><pre><code>provider "restapi" {
+  uri = var.gcx_api_url                       <span class="c"># the API address</span>
+
+  headers = {
+    Authorization  = "Bearer ${var.gcx_api_token}"   <span class="c"># who you are</span>
+    Accept         = "application/json"
+    "Content-Type" = "application/json"
+  }
+
+  id_attribute         = "data/slug"          <span class="c"># where an object's ID sits in a reply</span>
+  write_returns_object = true
+}</code></pre></div>
+      <p>Every API reply here looks like <code>{"status": "...", "data": {...}}</code>, so the ID is found at <code>data/slug</code>.</p>
+    </div>
+  </details>
+  <details open>
+    <summary><code>terraform/modules/vm/main.tf</code> <span class="chip tf">the request for one VM</span></summary>
+    <div class="body">
+      <p>A <b>module</b> is a reusable block. This one is called once per VM. It describes the exact request sent to the API.</p>
+      <div class="code"><div class="bar"><span>modules/vm/main.tf (abridged)</span><button class="copy" type="button">Copy</button></div><pre><code>resource "restapi_object" "vm" {
+  path = "/virtual-machines"                  <span class="c"># create = POST /virtual-machines</span>
+
+  data = jsonencode({                         <span class="c"># the JSON body of that request</span>
+    name     = var.name
+    template = var.template                   <span class="c"># which operating system</span>
+    plan     = var.plan                       <span class="c"># 1 CPU / 1 GB / 35 GB</span>
+    is_public = true                          <span class="c"># give it a public IP</span>
+    networks  = var.network == "" ? [] : [var.network]
+    user_data = "#cloud-config\nssh_authorized_keys:\n  - ${var.ssh_public_key}\n"
+  })
+
+  id_attribute = "data/slug"
+  read_path    = "/virtual-machines/{id}"     <span class="c"># 'make plan' re-reads the VM here</span>
+
+  destroy_method = "POST"                     <span class="c"># this cloud deletes by 'cancel request'</span>
+  destroy_path   = "/billing/service-cancel-requests/{id}"
+}</code></pre></div>
+      <ul>
+        <li><b><code>data</code></b> is the request body. Each field answers a question the API asks: name, operating system, size, public IP, network.</li>
+        <li><b><code>user_data</code></b> is a <em>cloud-init</em> script. On first boot the VM runs it and installs your public key, so you can log in without a password.</li>
+        <li><b><code>read_path</code></b> is how Terraform checks the VM still looks right. <code>make plan</code> calls it.</li>
+        <li><b><code>destroy_*</code></b> describes deletion. This cloud has no <code>DELETE</code> for VMs, so it is another <code>POST</code>.</li>
+      </ul>
+    </div>
+  </details>
+  <details>
+    <summary><code>terraform/envs/prod/main.tf</code> <span class="chip tf">which VMs exist</span></summary>
+    <div class="body"><p>Covered in <a href="#network">chapter 5</a>: it creates the server first, then the agents inside the server’s network.</p></div>
+  </details>
+
+  <h3>Run it</h3>
+  <ol class="steps">
+    <li><b>Preview.</b> Read it. A plan creates nothing.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make plan</code></pre></div>
+      <div class="code out"><div class="bar"><span>expected</span></div><pre><code>Plan: 5 to add, 0 to change, 0 to destroy.</code></pre></div></li>
+    <li><b>Apply.</b> Terraform repeats the plan and waits for you to type <code>yes</code>. This is the step that costs money.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make infra</code></pre></div></li>
+    <li><b>Check.</b> Three views must agree: your code, Terraform’s state, and the real cloud.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make status      <span class="c"># what the cloud says: Running / Starting / Error</span>
+make plan        <span class="c"># must say: No changes</span></code></pre></div>
+      <div class="code out"><div class="bar"><span>make status</span></div><pre><code>NAME    STATE    PUBLIC_IP
+k3s-01  Running  103.78.129.175
+k3s-03  Running  103.78.129.174
+k3s-02  Running  103.78.129.173</code></pre></div></li>
+  </ol>
+
+  <div class="callout note"><b>What happens inside <code>make infra</code></b>
+    <p>For each VM Terraform sends <code>POST /virtual-machines</code> with the JSON above, reads the ID from the reply, and saves it in <code>terraform.tfstate</code>. Next time, <code>make plan</code> compares your code with that file <em>and</em> with the real cloud, and shows only the difference. That is why “No changes” is meaningful.</p></div>
+</section>
+
+<!-- ================= handover ================= -->
+<section id="handover">
+  <p class="kicker">Step 2 <span class="chip tf">Terraform</span> → <span class="chip an">Ansible</span></p>
+  <h2>The hand-over: Terraform writes the host list</h2>
+  <p>Ansible needs to know which machines exist. Nobody types an IP address by hand: Terraform fills in a template and writes the file Ansible reads.</p>
+
+  <div class="grid">
+    <div class="card"><h4>The template</h4><p><code>terraform/envs/prod/inventory.tftpl</code> has blanks such as <code>${ansible_user}</code> and a loop over the machines.</p></div>
+    <div class="card"><h4>The resource that fills it</h4><p><code>local_file "inventory"</code> in <code>main.tf</code> renders the template and writes <code>ansible/inventories/prod/hosts.yml</code>.</p></div>
+    <div class="card"><h4>Where the IP comes from</h4><p>The VM module reads it from the API reply and exposes it as the output <code>public_ip</code>.</p></div>
+  </div>
+
+  <div class="code"><div class="bar"><span>ansible/inventories/prod/hosts.yml (generated, never edit by hand)</span><button class="copy" type="button">Copy</button></div><pre><code>all:
+  vars:
+    ansible_user: ubuntu                              <span class="c"># who Ansible logs in as</span>
+    common_admin_ssh_public_key: "ssh-ed25519 ..."    <span class="c"># key the baseline gives the admin user</span>
+    ansible_ssh_private_key_file: /run/keys/homelab   <span class="c"># path INSIDE the container</span>
+  children:
+    k3s_server:
+      hosts:
+        k3s-01: { ansible_host: 103.78.129.175 }
+    k3s_agent:
+      hosts:
+        k3s-02: { ansible_host: 103.78.129.173 }
+        k3s-03: { ansible_host: 103.78.129.174 }</code></pre></div>
+  <p><code>k3s_server</code> and <code>k3s_agent</code> are <b>groups</b>. Playbooks use them to say “run this on the server only” or “run this on the agents only”.</p>
+
+  <div class="callout warn"><b>The IP can be empty right after creation</b>
+    <p>A VM may not have an address yet when Terraform writes the file. When the VMs are <code>Running</code>, run <code>make infra</code> once more. It only refreshes the file.</p></div>
+</section>
+
+<!-- ================= ansible ================= -->
+<section id="ansible">
+  <p class="kicker">Step 3 <span class="chip an">Ansible</span></p>
+  <h2>Ansible in a container</h2>
+  <p>Ansible runs inside a Docker container so that you, a teammate and later a pipeline all use exactly the same version. Nothing is installed on your machine and nothing special is installed on the VMs. They only need SSH and Python, which Ubuntu already has.</p>
+
+  <div class="code"><div class="bar"><span>Makefile: the command every Ansible target reuses</span><button class="copy" type="button">Copy</button></div><pre><code>docker run --rm -t \
+  -v "$(CURDIR):/work" \                          <span class="c"># the repo appears at /work</span>
+  -v "$(SSH_KEY):/run/keys/homelab:ro" \          <span class="c"># your private key, read-only</span>
+  -e ANSIBLE_CONFIG=/work/ansible/ansible.cfg \
+  homelab-ansible  ...</code></pre></div>
+  <ul>
+    <li><b><code>--rm</code></b> deletes the container when the command ends. That is why you never see it in <code>docker ps</code>. The <em>image</em> stays.</li>
+    <li><b>The key is mounted read-only</b> and never copied into the image, so it cannot leak with the image.</li>
+    <li><b><code>ansible.cfg</code></b> sets <code>StrictHostKeyChecking=accept-new</code>: trust a host the first time, refuse it if its key later changes.</li>
+  </ul>
+
+  <ol class="steps">
+    <li>Build the image once, or after you change the <code>Dockerfile</code>.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make ansible-build</code></pre></div></li>
+    <li>Check that Ansible can log in to every machine.
+      <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make ping</code></pre></div>
+      <div class="code out"><div class="bar"><span>expected</span></div><pre><code>k3s-01 | SUCCESS =&gt; ... ping: pong
+k3s-02 | SUCCESS =&gt; ... ping: pong
+k3s-03 | SUCCESS =&gt; ... ping: pong</code></pre></div></li>
+  </ol>
+  <p>Ansible’s <code>ping</code> is not a network ping. It logs in over SSH, runs a tiny Python check and answers <code>pong</code>. If it works, Ansible can control the machine.</p>
+</section>
+
+<!-- ================= baseline ================= -->
+<section id="baseline">
+  <p class="kicker">Step 4 <span class="chip an">Ansible</span></p>
+  <h2>The baseline role</h2>
+  <p>Fresh machines are open and unconfigured. The <code>common</code> role gives every machine the same safe starting point. The entry point is <code>ansible/playbooks/site.yml</code>, and the tasks are in <code>ansible/roles/common/tasks/main.yml</code>.</p>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Area</th><th>What it does on the VM</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Packages</td><td>Installs <code>ufw</code>, <code>fail2ban</code>, <code>chrony</code>, <code>curl</code>, <code>ca-certificates</code></td><td>The tools the rest of the role needs</td></tr>
+      <tr><td>Admin user</td><td>Creates <code>devops</code> with your key and passwordless <code>sudo</code></td><td>An account you control, not the image default</td></tr>
+      <tr><td>SSH hardening</td><td>No root login, no passwords, 3 attempts</td><td>Password guessing on port 22 is the most common attack</td></tr>
+      <tr><td>Swap</td><td>Creates and enables a 1 GB swap file</td><td>A 1 GB machine can freeze without it</td></tr>
+      <tr><td>Firewall</td><td>Deny incoming, allow outgoing, allow port 22 and the private networks</td><td>Closed by default</td></tr>
+      <tr><td>fail2ban</td><td>Blocks IPs that keep failing SSH logins</td><td>Automatic defence</td></tr>
+      <tr><td>chrony</td><td>Keeps the clock accurate</td><td>Kubernetes and TLS need correct time</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Run it, then run it again</h3>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make check       <span class="c"># dry run: shows what WOULD change</span>
+make config      <span class="c"># the real run</span>
+make config      <span class="c"># again: must say changed=0</span></code></pre></div>
+  <div class="grid">
+    <div class="code out" style="margin:0"><div class="bar"><span>first run</span></div><pre><code>k3s-01 : ok=31 changed=5  failed=0
+k3s-02 : ok=25 changed=3  failed=0</code></pre></div>
+    <div class="code out" style="margin:0"><div class="bar"><span>second run</span></div><pre><code>k3s-01 : ok=…  changed=0  failed=0
+k3s-02 : ok=…  changed=0  failed=0</code></pre></div>
+  </div>
+  <p>The second run showing <code>changed=0</code> proves the role is <b>idempotent</b>: the machines now match the code.</p>
+
+  <h3>Four patterns worth learning from this role</h3>
+  <div class="grid">
+    <div class="card an"><h4>Desired state</h4><p><code>state: present</code> means “make sure it exists”. It does nothing if it already does.</p></div>
+    <div class="card an"><h4><code>creates:</code></h4><p>A <code>command</code> task is skipped if the named file exists. This makes one-off commands safe to repeat.</p></div>
+    <div class="card an"><h4><code>changed_when</code></h4><p>Tells Ansible whether a command really changed something, so the recap is honest.</p></div>
+    <div class="card an"><h4>Check-mode tolerance</h4><p><code>ignore_errors: "{{ ansible_check_mode }}"</code> lets a task fail <em>only</em> during a dry run, when a new user or package does not exist yet.</p></div>
+  </div>
+
+  <details>
+    <summary>Why the firewall tasks are in this order</summary>
+    <div class="body">
+      <div class="code"><div class="bar"><span>roles/common/tasks/main.yml</span><button class="copy" type="button">Copy</button></div><pre><code>- name: Allow configured ports          <span class="c"># 1. allow SSH first</span>
+  community.general.ufw: { rule: allow, port: "22", proto: tcp }
+- name: Allow traffic from trusted networks   <span class="c"># 2. nodes trust each other</span>
+  ...
+- name: Default deny incoming           <span class="c"># 3. then close everything else</span>
+  community.general.ufw: { default: deny, direction: incoming }
+- name: Enable the firewall             <span class="c"># 4. switch it on LAST</span>
+  community.general.ufw: { state: enabled }</code></pre></div>
+      <p>If the firewall were switched on before port 22 was allowed, Ansible would cut off its own connection and lock itself out.</p>
+    </div>
+  </details>
+  <details>
+    <summary>Why the SSH config is tested before it is applied</summary>
+    <div class="body"><p>The hardening file is followed by a task that runs <code>sshd -t</code>. If the configuration had a typo, the task fails <em>before</em> the SSH service reloads, so you are never locked out by a bad file. The reload itself is a <b>handler</b>: it runs once at the end, and only if the file really changed.</p></div>
+  </details>
+</section>
+
+<!-- ================= network ================= -->
+<section id="network">
+  <p class="kicker">Step 5 <span class="chip tf">Terraform</span></p>
+  <h2>Three nodes, one private network</h2>
+  <p>For a cluster, the nodes must reach each other privately. The cloud makes a new private network for each VM unless you tell it which one to join. So Terraform creates the server first, reads which network it landed in, and only then creates the agents inside that same network.</p>
+
+  <figure>
+    <div class="fig-wrap">
+      <svg viewBox="0 0 800 250" role="img" aria-label="Terraform creates the server, waits 60 seconds, reads the server's network, creates two agents in that network, then writes the inventory.">
+        <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+        <rect class="tfb" x="8" y="40" width="150" height="76" rx="10"/>
+        <text class="tft" x="83" y="68" text-anchor="middle">vm_server</text>
+        <text class="small" x="83" y="88" text-anchor="middle">creates k3s-01</text>
+        <text class="small" x="83" y="104" text-anchor="middle">gets a private network</text>
+
+        <rect class="box" x="198" y="40" width="130" height="76" rx="10"/>
+        <text x="263" y="68" text-anchor="middle">time_sleep</text>
+        <text class="small" x="263" y="88" text-anchor="middle">wait 60 s</text>
+        <text class="small" x="263" y="104" text-anchor="middle">until it has booted</text>
+
+        <rect class="box" x="368" y="40" width="170" height="76" rx="10"/>
+        <text x="453" y="68" text-anchor="middle">data lookup</text>
+        <text class="small" x="453" y="88" text-anchor="middle">ask the API: which</text>
+        <text class="small" x="453" y="104" text-anchor="middle">network is k3s-01 on?</text>
+
+        <rect class="tfb" x="578" y="12" width="214" height="60" rx="10"/>
+        <text class="tft" x="685" y="38" text-anchor="middle">vm_agent  k3s-02</text>
+        <text class="small" x="685" y="56" text-anchor="middle">joins that network</text>
+        <rect class="tfb" x="578" y="84" width="214" height="60" rx="10"/>
+        <text class="tft" x="685" y="110" text-anchor="middle">vm_agent  k3s-03</text>
+        <text class="small" x="685" y="128" text-anchor="middle">joins that network</text>
+
+        <line class="ln" x1="160" y1="78" x2="196" y2="78" marker-end="url(#ar2)"/>
+        <line class="ln" x1="330" y1="78" x2="366" y2="78" marker-end="url(#ar2)"/>
+        <path class="ln" d="M540 78 L558 78 L558 42 L576 42" marker-end="url(#ar2)"/>
+        <path class="ln" d="M558 78 L558 114 L576 114" marker-end="url(#ar2)"/>
+        <text class="small mono" x="560" y="162" text-anchor="middle">network = en-001780-0064</text>
+
+        <rect class="tfb" x="258" y="190" width="290" height="46" rx="10"/>
+        <text class="tft" x="403" y="210" text-anchor="middle">local_file.inventory</text>
+        <text class="small" x="403" y="227" text-anchor="middle">writes hosts.yml once every VM has an IP</text>
+        <path class="ln dash" d="M685 146 L685 213 L550 213" marker-end="url(#ar2)"/>
+        <path class="ln dash" d="M83 118 L83 213 L256 213" marker-end="url(#ar2)"/>
+      </svg>
+    </div>
+    <figcaption>Terraform works out this order by itself, because each block uses a value produced by the one before. That is a <b>dependency graph</b>, a core Terraform idea.</figcaption>
+  </figure>
+
+  <div class="code"><div class="bar"><span>terraform/envs/prod/main.tf (abridged)</span><button class="copy" type="button">Copy</button></div><pre><code>locals {
+  vms = {
+    "k3s-01" = { role = "server" }              <span class="c"># add a line to add a node</span>
+    "k3s-02" = { role = "agent" }
+    "k3s-03" = { role = "agent" }
+  }
+}
+
+module "vm_server" { ... for_each = local.servers ... }
+
+resource "time_sleep" "server_ready" {
+  create_duration = "60s"
+  depends_on      = [module.vm_server]
+}
+
+data "restapi_object" "server_vm" {              <span class="c"># read-only lookup</span>
+  path         = "/virtual-machines"
+  search_key   = "name"
+  search_value = local.server_name
+  depends_on   = [time_sleep.server_ready]
+}
+
+module "vm_agent" {
+  ...
+  network         = local.server_network         <span class="c"># join the server's network</span>
+  require_network = true                         <span class="c"># refuse to build without one</span>
+}</code></pre></div>
+
+  <div class="callout ok"><b>A safety check that paid off</b>
+    <p><code>require_network = true</code> adds a <code>precondition</code> in the module: if the network slug is empty, Terraform refuses to create the agent instead of silently making a separate network. On the first attempt the lookup read the wrong level of the API reply, the check fired, and nothing wrong was built.</p></div>
+</section>
+
+<!-- ================= k3s ================= -->
+<section id="k3s">
+  <p class="kicker">Step 6 <span class="chip an">Ansible</span> <span class="chip k8">Kubernetes</span></p>
+  <h2>The cluster</h2>
+  <p><b>k3s</b> is a small, complete Kubernetes. It ships its own container engine, <code>containerd</code>, so Docker is not installed on the nodes. A Docker daemon on a 1 GB machine would only waste memory.</p>
+
+  <h3>One playbook, four plays, in order</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Play</th><th>Runs on</th><th>Role</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>all</code></td><td><code>common</code></td><td>Baseline everywhere</td></tr>
+      <tr><td>2</td><td><code>k3s_server</code></td><td><code>k3s_server</code></td><td>Control plane installed; join token created</td></tr>
+      <tr><td>3</td><td><code>k3s_agent</code></td><td><code>k3s_agent</code></td><td>Workers join using that token</td></tr>
+      <tr><td>4</td><td><code>k3s_server</code></td><td>a task</td><td>Waits until every node is <code>Ready</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <figure>
+    <div class="fig-wrap">
+      <svg viewBox="0 0 800 300" role="img" aria-label="The server creates a join token. Ansible reads it and hands it to each agent. Each agent then connects to the server's private address on port 6443.">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+
+        <rect class="k8b" x="10" y="90" width="220" height="130" rx="12"/>
+        <text class="k8t" x="120" y="116" text-anchor="middle">k3s-01  (server)</text>
+        <text class="small" x="120" y="134" text-anchor="middle">control plane, 10.0.0.231</text>
+        <rect class="box" x="30" y="152" width="180" height="50" rx="8"/>
+        <text class="mono" x="120" y="173" text-anchor="middle">node-token</text>
+        <text class="small" x="120" y="190" text-anchor="middle">created by k3s itself</text>
+
+        <rect class="anb" x="300" y="115" width="200" height="80" rx="12"/>
+        <text class="ant" x="400" y="143" text-anchor="middle">Ansible</text>
+        <text class="small" x="400" y="163" text-anchor="middle">slurp → set_fact</text>
+        <text class="small" x="400" y="179" text-anchor="middle">→ hostvars</text>
+
+        <rect class="k8b" x="570" y="30" width="220" height="86" rx="12"/>
+        <text class="k8t" x="680" y="56" text-anchor="middle">k3s-02  (agent)</text>
+        <text class="small" x="680" y="75" text-anchor="middle">worker, 10.0.0.41</text>
+        <text class="mono small" x="680" y="98" text-anchor="middle">K3S_TOKEN + K3S_URL</text>
+
+        <rect class="k8b" x="570" y="194" width="220" height="86" rx="12"/>
+        <text class="k8t" x="680" y="220" text-anchor="middle">k3s-03  (agent)</text>
+        <text class="small" x="680" y="239" text-anchor="middle">worker, 10.0.0.185</text>
+        <text class="mono small" x="680" y="262" text-anchor="middle">K3S_TOKEN + K3S_URL</text>
+
+        <!-- 1: Ansible reads the token from the server -->
+        <line class="ln" x1="232" y1="155" x2="298" y2="155" marker-end="url(#ar3)"/>
+        <text class="small" x="265" y="146" text-anchor="middle">1 read</text>
+
+        <!-- 2: Ansible hands it to each agent -->
+        <line class="ln" x1="502" y1="135" x2="568" y2="95" marker-end="url(#ar3)"/>
+        <line class="ln" x1="502" y1="175" x2="568" y2="215" marker-end="url(#ar3)"/>
+        <text class="small" x="536" y="158" text-anchor="middle">2 hand</text>
+        <text class="small" x="536" y="171" text-anchor="middle">over</text>
+
+        <!-- 3: agents join the server over the private network -->
+        <path class="ln dash" d="M570 44 L120 44 L120 88" marker-end="url(#ar3)"/>
+        <path class="ln dash" d="M570 268 L120 268 L120 222" marker-end="url(#ar3)"/>
+        <text class="small mono" x="345" y="36" text-anchor="middle">3 join: https://10.0.0.231:6443  (private network)</text>
+        <text class="small mono" x="345" y="288" text-anchor="middle">3 join: same address</text>
+      </svg>
+    </div>
+    <figcaption>The join token is never copied by hand. Ansible reads it on the server and passes it to the agents, which connect to the server’s <em>private</em> address.</figcaption>
+  </figure>
+
+  <details open>
+    <summary><code>roles/k3s_agent/tasks/main.yml</code> <span class="chip an">how an agent joins</span></summary>
+    <div class="body">
+      <div class="code"><div class="bar"><span>k3s_agent tasks (abridged)</span><button class="copy" type="button">Copy</button></div><pre><code>- name: Install the k3s agent and join the cluster
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s-install.sh
+    creates: /usr/local/bin/k3s-agent-uninstall.sh      <span class="c"># run once only</span>
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"            <span class="c"># pinned version</span>
+    INSTALL_K3S_EXEC: "agent --node-ip {{ ansible_facts['default_ipv4']['address'] }}"
+    K3S_URL:   "https://{{ hostvars[groups['k3s_server'][0]]['ansible_facts']['default_ipv4']['address'] }}:6443"
+    K3S_TOKEN: "{{ hostvars[groups['k3s_server'][0]]['k3s_server_node_token'] }}"
+  no_log: true                                          <span class="c"># keep the secret out of the output</span></code></pre></div>
+      <p><code>hostvars[...]</code> is how a task running on one machine reads a value that was created on another. Here an agent reads the token that the server made.</p>
+    </div>
+  </details>
+  <details>
+    <summary>Why the server runs no applications</summary>
+    <div class="body"><p>The server is tainted (<code>CriticalAddonsOnly</code>), so only system pods run on it. With about 1 GB of RAM it needs all of it for the control plane, and your applications land on the two agents.</p></div>
+  </details>
+  <details>
+    <summary>Why the firewall rule uses the machines’ own network facts</summary>
+    <div class="body">
+      <div class="code"><div class="bar"><span>inventories/prod/group_vars/all/vars.yml</span><button class="copy" type="button">Copy</button></div><pre><code>common_ufw_allow_from_cidrs:
+  - "{{ ansible_facts['default_ipv4']['network'] }}/{{ ansible_facts['default_ipv4']['prefix'] }}"
+  - "{{ k3s_pod_cidr }}"          <span class="c"># 10.42.0.0/16  pods</span>
+  - "{{ k3s_service_cidr }}"      <span class="c"># 10.43.0.0/16  services</span></code></pre></div>
+      <p>The nodes trust their own private subnet, the pod network and the service network on every port. Traffic from the internet still reaches only the ports in the allow list. Computing the subnet from each node’s facts means no address is hard-coded.</p>
+    </div>
+  </details>
+
+  <h3>Run it and look at the cluster</h3>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make config      <span class="c"># runs all four plays; waits until every node is Ready</span>
+make nodes       <span class="c"># kubectl get nodes -o wide</span></code></pre></div>
+  <div class="code out"><div class="bar"><span>make nodes</span></div><pre><code>NAME     STATUS  ROLES          AGE    VERSION        INTERNAL-IP
+k3s-01   Ready   control-plane  3m29s  v1.37.2+k3s1   10.0.0.231
+k3s-02   Ready   &lt;none&gt;         2m42s  v1.37.2+k3s1   10.0.0.41
+k3s-03   Ready   &lt;none&gt;         2m42s  v1.37.2+k3s1   10.0.0.185</code></pre></div>
+  <p>Three nodes, all <code>Ready</code>, built entirely from code. For any other kubectl command use <code>make kubectl ARGS="get pods -A -o wide"</code>.</p>
+</section>
+
+<!-- ================= deploy ================= -->
+<section id="deploy">
+  <p class="kicker">Step 7 <span class="chip an">Ansible</span> <span class="chip k8">Kubernetes</span></p>
+  <h2>Deploy applications and use the UI</h2>
+  <p>Kubernetes objects live as YAML files in <code>k8s/</code>. Applying them puts them in the cluster.</p>
+
+  <div class="code"><div class="bar"><span>k8s/headlamp/helmchart.yaml (abridged)</span><button class="copy" type="button">Copy</button></div><pre><code>apiVersion: helm.cattle.io/v1
+kind: HelmChart                       <span class="c"># k3s has a built-in Helm controller</span>
+metadata: { name: headlamp, namespace: kube-system }
+spec:
+  repo: https://kubernetes-sigs.github.io/headlamp/
+  chart: headlamp
+  version: 0.46.0                     <span class="c"># pinned on purpose</span>
+  targetNamespace: headlamp
+  createNamespace: true</code></pre></div>
+  <p>A <code>HelmChart</code> object tells k3s to download and install a chart, so no Helm program is needed on any machine.</p>
+
+  <h3>What <code>make deploy</code> does</h3>
+  <ol class="steps">
+    <li>Creates <code>/opt/k8s</code> on the server.</li>
+    <li>Copies the whole <code>k8s/</code> folder there.</li>
+    <li>Runs <code>k3s kubectl apply -R -f /opt/k8s</code>.</li>
+  </ol>
+  <p>It goes through Ansible and SSH, which is already open. Running <code>kubectl</code> from a laptop instead would need the Kubernetes API port (6443) open to the internet.</p>
+
+  <h3>Open the UI without opening a port</h3>
+  <figure>
+    <div class="fig-wrap">
+      <svg viewBox="0 0 800 220" role="img" aria-label="Your browser connects to localhost 8080. An encrypted SSH tunnel carries it to port 30080 on a worker where Headlamp listens. Direct access from the internet to port 30080 is blocked.">
+        <defs><marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+        <rect class="box" x="10" y="60" width="190" height="90" rx="12"/>
+        <text x="105" y="92" text-anchor="middle" style="font-weight:600">Your machine</text>
+        <text class="mono" x="105" y="114" text-anchor="middle">localhost:8080</text>
+        <text class="small" x="105" y="134" text-anchor="middle">browser</text>
+
+        <rect class="k8b" x="580" y="60" width="210" height="90" rx="12"/>
+        <text class="k8t" x="685" y="92" text-anchor="middle">k3s-02 (worker)</text>
+        <text class="mono" x="685" y="114" text-anchor="middle">Headlamp :30080</text>
+        <text class="small" x="685" y="134" text-anchor="middle">listens only inside</text>
+
+        <rect x="206" y="92" width="368" height="26" rx="13" fill="color-mix(in srgb, var(--ok) 18%, var(--surface))" stroke="var(--ok)" stroke-width="1.5"/>
+        <text x="390" y="110" text-anchor="middle" style="fill:var(--ok);font-weight:600">encrypted SSH tunnel (port 22)</text>
+        <line class="ln" x1="200" y1="105" x2="206" y2="105"/>
+        <line class="ln" x1="574" y1="105" x2="580" y2="105" marker-end="url(#ar4)"/>
+
+        <rect class="badb" x="330" y="160" width="130" height="40" rx="8"/>
+        <text class="badt" x="395" y="178" text-anchor="middle">Internet</text>
+        <text class="small" x="395" y="193" text-anchor="middle">port 30080 closed</text>
+        <path class="ln dash" d="M460 180 L560 150" style="stroke:var(--bad)"/>
+        <text class="badt" x="548" y="176">✕</text>
+      </svg>
+    </div>
+    <figcaption>The UI controls the whole cluster, so it is not exposed. The tunnel rides over the SSH connection that is already open, and no extra firewall port is needed.</figcaption>
+  </figure>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make headlamp-token   <span class="c"># prints a login token, valid 8 hours. Treat it like a password.</span>
+make headlamp         <span class="c"># keep it running, then open http://localhost:8080</span></code></pre></div>
+  <p>Headlamp lets you browse every resource, read logs, open a shell in a pod, and create or edit anything from YAML. It does not have a click-through deploy wizard like Portainer. You write or paste YAML, which is how Kubernetes is really used.</p>
+
+  <div class="callout warn"><b>Deleting a file does not delete the object</b>
+    <p><code>kubectl apply</code> only adds and changes. To remove something, delete it explicitly (<code>make kubectl ARGS="delete namespace NAME"</code>), delete <code>/opt/k8s/NAME</code> on the server, and delete the folder from <code>k8s/</code>. Otherwise the next <code>make deploy</code> brings it back.</p></div>
+</section>
+
+<!-- ================= commands ================= -->
+<section id="commands">
+  <p class="kicker">Reference</p>
+  <h2>Command map</h2>
+  <p><code>make</code> is only a shortcut. This table says which tool each command really starts and whether it changes anything. Filter by tool:</p>
+  <div class="filters" id="cmdFilters" role="group" aria-label="Filter commands by tool">
+    <button type="button" data-f="all" aria-pressed="true">All</button>
+    <button type="button" data-f="tf" aria-pressed="false">Terraform</button>
+    <button type="button" data-f="an" aria-pressed="false">Ansible</button>
+    <button type="button" data-f="k8" aria-pressed="false">Kubernetes</button>
+    <button type="button" data-f="ot" aria-pressed="false">Other</button>
+    <button type="button" data-f="chg" aria-pressed="false">Changes something</button>
+  </div>
+  <div class="tablewrap"><table id="cmdTable">
+    <thead><tr><th>Command</th><th>Tool</th><th>What it does</th><th>Changes?</th></tr></thead>
+    <tbody>
+      <tr data-t="ot"><td><code>make check-api</code></td><td><span class="chip ot">curl</span></td><td>Calls the API once to prove the URL and token work</td><td class="no">No</td></tr>
+      <tr data-t="tf"><td><code>make init</code></td><td><span class="chip tf">Terraform</span></td><td>Downloads the provider plugins</td><td class="no">No</td></tr>
+      <tr data-t="tf"><td><code>make validate</code></td><td><span class="chip tf">Terraform</span></td><td>Checks the <code>.tf</code> files are written correctly</td><td class="no">No</td></tr>
+      <tr data-t="tf"><td><code>make plan</code></td><td><span class="chip tf">Terraform</span></td><td>Compares code, state and the real cloud; prints the difference</td><td class="no">No</td></tr>
+      <tr data-t="tf" data-c="1"><td><code>make infra</code></td><td><span class="chip tf">Terraform</span></td><td>Applies the difference: creates VMs, writes <code>hosts.yml</code></td><td class="yes">Yes, costs money</td></tr>
+      <tr data-t="tf" data-c="1"><td><code>make destroy</code></td><td><span class="chip tf">Terraform</span></td><td>Deletes what Terraform created</td><td class="yes">Yes</td></tr>
+      <tr data-t="tf ot"><td><code>make status</code></td><td><span class="chip tf">Terraform</span> <span class="chip ot">curl</span></td><td>Lists every VM with its state and IP</td><td class="no">No</td></tr>
+      <tr data-t="ot"><td><code>make ansible-build</code></td><td><span class="chip ot">Docker</span></td><td>Builds the Ansible container image</td><td class="no">No (local)</td></tr>
+      <tr data-t="an"><td><code>make ping</code></td><td><span class="chip an">Ansible</span></td><td>Can Ansible log in to every VM?</td><td class="no">No</td></tr>
+      <tr data-t="an"><td><code>make lint-ansible</code></td><td><span class="chip an">Ansible</span></td><td>Style and safety check of the Ansible code</td><td class="no">No</td></tr>
+      <tr data-t="an"><td><code>make check</code></td><td><span class="chip an">Ansible</span></td><td>Dry run of <code>site.yml</code>: what would change</td><td class="no">No</td></tr>
+      <tr data-t="an k8" data-c="1"><td><code>make config</code></td><td><span class="chip an">Ansible</span></td><td>Applies <code>site.yml</code>: baseline + k3s on the VMs</td><td class="yes">Yes</td></tr>
+      <tr data-t="an k8"><td><code>make nodes</code></td><td><span class="chip an">Ansible</span> <span class="chip k8">kubectl</span></td><td>Shows the Kubernetes nodes</td><td class="no">No</td></tr>
+      <tr data-t="an k8"><td><code>make kubectl ARGS="…"</code></td><td><span class="chip an">Ansible</span> <span class="chip k8">kubectl</span></td><td>Runs any <code>kubectl</code> command on the server</td><td>Depends</td></tr>
+      <tr data-t="an k8" data-c="1"><td><code>make deploy</code></td><td><span class="chip an">Ansible</span> <span class="chip k8">kubectl</span></td><td>Sends <code>k8s/</code> to the server and applies it</td><td class="yes">Yes</td></tr>
+      <tr data-t="ot"><td><code>make headlamp</code></td><td><span class="chip ot">ssh</span></td><td>Opens the tunnel to the web UI</td><td class="no">No</td></tr>
+      <tr data-t="an k8"><td><code>make headlamp-token</code></td><td><span class="chip an">Ansible</span> <span class="chip k8">kubectl</span></td><td>Prints a short-lived login token</td><td class="no">No</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================= flows ================= -->
+<section id="flows">
+  <p class="kicker">Reference</p>
+  <h2>How information moves between the tools</h2>
+  <p>Most confusing moments come from not knowing where a value is born and where it ends up.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Value</th><th>Born where</th><th>Path</th><th>Used where</th></tr></thead>
+    <tbody>
+      <tr><td>API token</td><td><code>.env</code></td><td>Makefile → <code>TF_VAR_…</code> → provider header</td><td>Every API call</td></tr>
+      <tr><td>Public IP</td><td>Cloud API reply</td><td>module output → <code>local_file</code> → <code>hosts.yml</code></td><td><code>ansible_host</code></td></tr>
+      <tr><td>Network name</td><td>Cloud (for the server)</td><td><code>data</code> lookup → <code>server_network</code> → agent module</td><td>Agents join the same network</td></tr>
+      <tr><td>Your public key</td><td><code>~/.ssh/homelab.pub</code></td><td><code>user_data</code> at first boot; <code>hosts.yml</code> → <code>common</code> role</td><td>Login as <code>ubuntu</code>, then <code>devops</code></td></tr>
+      <tr><td>Private IP</td><td>The VM’s network card</td><td>Ansible facts <code>default_ipv4</code></td><td><code>--node-ip</code>, <code>K3S_URL</code>, firewall rule</td></tr>
+      <tr><td>Join token</td><td>The k3s server</td><td><code>slurp</code> → <code>set_fact</code> → <code>hostvars</code></td><td>Agents’ <code>K3S_TOKEN</code></td></tr>
+      <tr><td>Kubeconfig</td><td>The k3s server</td><td><code>fetch</code> → <code>ansible/.ansible/kubeconfig.yaml</code></td><td><code>kubectl</code> from a laptop (not used yet)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================= errors ================= -->
+<section id="errors">
+  <p class="kicker">Reference</p>
+  <h2>What went wrong, and what it taught</h2>
+  <p>Every one of these happened while building this. Errors from a cloud API usually name the exact field or object at fault, so read the message first. A rejected request creates nothing, so most of these cost nothing.</p>
+  <input class="search" id="errSearch" type="search" placeholder="Search the errors, for example 403" aria-label="Search the errors">
+  <div id="errList">
+    <details class="err"><summary><span class="sig">500 when creating an SSH key</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>The provider’s key endpoint failed for every input.</dd>
+      <dt>Fix</dt><dd>Install the key with cloud-init <code>user_data</code> instead.</dd>
+      <dt>Lesson</dt><dd>Have a second route when one feature is broken.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">422 “network_plan field is required”</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>A required field was missing from the request body.</dd>
+      <dt>Fix</dt><dd>Look the value up with a read-only API call and add it.</dd>
+      <dt>Lesson</dt><dd>A rejected request creates nothing, so errors are cheap.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">403 “delete_public_ip field is required”</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>The delete request lacked a field that is not in the published docs.</dd>
+      <dt>Fix</dt><dd>Added the field to <code>destroy_data</code>.</dd>
+      <dt>Lesson</dt><dd>The delete request is saved in the state when the resource is created, so a code fix only helps <em>new</em> resources. For older ones, delete through the API and then run <code>terraform state rm</code>.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">Resource precondition failed (network slug empty)</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>The lookup read the wrong level of the reply: <code>.networks</code> instead of <code>.data.networks</code>.</dd>
+      <dt>Fix</dt><dd>Corrected the path in <code>server_network</code>.</dd>
+      <dt>Lesson</dt><dd>The safety check stopped agents from being built in the wrong network.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">“Insufficient address capacity”</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>Two VMs asked for a public IP at the same instant.</dd>
+      <dt>Fix</dt><dd>Created the failed VM again on its own.</dd>
+      <dt>Lesson</dt><dd>Cloud APIs can race. Create things one at a time when they compete for a limited resource.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">REMOTE HOST IDENTIFICATION HAS CHANGED</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>A rebuilt VM got an IP that an earlier VM had used, but with a new SSH host key.</dd>
+      <dt>Fix</dt><dd><code>ssh-keygen -R &lt;ip&gt; -f ansible/.ansible/known_hosts</code></dd>
+      <dt>Lesson</dt><dd>This warning protects you. Understand why the key changed before you clear it.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">Ansible dry run fails on a task</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>A dry run does not create things, so a later task cannot find the new user, file or package.</dd>
+      <dt>Fix</dt><dd><code>ignore_errors: "{{ ansible_check_mode }}"</code> on those tasks only.</dd>
+      <dt>Lesson</dt><dd>In a real run the same task is still a real failure.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">ansible-lint var-naming</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>Variables defined in a role must start with the role’s name.</dd>
+      <dt>Fix</dt><dd>Renamed them to <code>common_…</code>.</dd>
+      <dt>Lesson</dt><dd>Two roles can then never share a variable by accident.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">Shell errors when reading .env</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>The token contains a <code>|</code> character.</dd>
+      <dt>Fix</dt><dd>Quote the values in <code>.env</code>. The Makefile strips the quotes with <code>sed</code>.</dd>
+      <dt>Lesson</dt><dd>Treat secrets as data, not as shell syntax.</dd></dl></div></details>
+    <details class="err"><summary><span class="sig">Terraform “unsupported argument”</span></summary><div class="body"><dl>
+      <dt>Cause</dt><dd>Option names were guessed instead of read.</dd>
+      <dt>Fix</dt><dd><code>terraform providers schema -json</code> lists the real arguments.</dd>
+      <dt>Lesson</dt><dd>Check the schema; do not guess.</dd></dl></div></details>
+  </div>
+  <p id="errNone" hidden>No error matches that search.</p>
+</section>
+
+<!-- ================= routine ================= -->
+<section id="routine">
+  <p class="kicker">Reference</p>
+  <h2>Daily routine and rebuild</h2>
+  <h3>A normal session</h3>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make status      <span class="c"># are the VMs up?</span>
+make plan        <span class="c"># does reality match the code?       expect: No changes</span>
+make check       <span class="c"># would Ansible change anything?     expect: changed=0</span>
+make nodes       <span class="c"># is the cluster healthy?</span>
+make deploy      <span class="c"># apply whatever is in k8s/</span></code></pre></div>
+
+  <h3>Rebuild from nothing</h3>
+  <p>The real test of the project: the machines are disposable and the repo is what you keep.</p>
+  <div class="code"><div class="bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>make destroy     <span class="c"># delete the VMs (check the console for leftover IPs or networks)</span>
+make infra       <span class="c"># create 3 VMs, write hosts.yml</span>
+make infra       <span class="c"># again, once they are Running: refreshes the IPs</span>
+make config      <span class="c"># baseline + k3s on all three</span>
+make deploy      <span class="c"># the web UI</span></code></pre></div>
+
+  <div class="callout note"><b>Habits that save money and time</b>
+    <ul>
+      <li>Machines are billed by the hour while they exist, even when idle. Destroy them when you stop for a while.</li>
+      <li>The state file is local. If you lose it, Terraform forgets the VMs. A team keeps it in shared storage.</li>
+      <li>Only port 22 is open to the internet. The cluster API (6443) and web ports (80/443) stay closed until something is ready to serve, and then open only to your own IP first.</li>
+      <li>Always read the plan before you apply.</li>
+    </ul></div>
+</section>
+
+<!-- ================= practice ================= -->
+<section id="practice">
+  <p class="kicker">Reference</p>
+  <h2>Practice checklist</h2>
+  <p>Each item teaches a real operations skill. Your ticks are saved in this browser.</p>
+  <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+  <p class="pct" id="pct">0 of 0 done</p>
+
+  <h3><span class="chip tf">Terraform</span></h3>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="tf1"><span>Read a plan line by line and explain every <code>+</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="tf2"><span>Change the VM plan in <code>variables.tf</code>, run <code>make plan</code>, and see whether it says <em>update in place</em> or <em>replace</em>.</span></label></li>
+    <li><label><input type="checkbox" data-k="tf3"><span>Follow the public IP from the API reply to <code>hosts.yml</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="tf4"><span>Remove <code>k3s-03</code> from <code>locals.vms</code> and read what <code>make plan</code> wants to do. Do not apply it.</span></label></li>
+    <li><label><input type="checkbox" data-k="tf5"><span>Change something by hand in the cloud console, run <code>make plan</code>, and watch drift appear.</span></label></li>
+  </ul>
+  <h3><span class="chip an">Ansible</span></h3>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="an1"><span>Run <code>make config</code> twice. The second run must say <code>changed=0</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="an2"><span>Add a package to <code>common_packages</code>, run <code>make check</code>, then <code>make config</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="an3"><span>Stop <code>fail2ban</code> on one VM by hand, run <code>make config</code>, and watch it repair.</span></label></li>
+    <li><label><input type="checkbox" data-k="an4"><span>Explain why <code>ufw enable</code> is the last firewall task.</span></label></li>
+    <li><label><input type="checkbox" data-k="an5"><span>Find where <code>K3S_TOKEN</code> comes from and on which machine it was created.</span></label></li>
+    <li><label><input type="checkbox" data-k="an6"><span>Run <code>make lint-ansible</code> and fix whatever it reports.</span></label></li>
+  </ul>
+  <h3><span class="chip k8">Kubernetes</span></h3>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="k1"><span><code>make nodes</code> shows three nodes, all <code>Ready</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="k2"><span>Deploy a small app with 3 replicas from YAML and see which node each pod landed on.</span></label></li>
+    <li><label><input type="checkbox" data-k="k3"><span>Do a rolling update, then roll it back.</span></label></li>
+    <li><label><input type="checkbox" data-k="k4"><span>Shut one worker down and watch its pods move to the other. Start it again.</span></label></li>
+    <li><label><input type="checkbox" data-k="k5"><span>Log in to the web UI through the tunnel and browse the pods.</span></label></li>
+  </ul>
+  <h3><span class="chip ot">Operations</span></h3>
+  <ul class="check">
+    <li><label><input type="checkbox" data-k="o1"><span>Full rebuild: <code>make destroy</code>, then <code>make infra</code>, <code>make config</code>, <code>make deploy</code>.</span></label></li>
+    <li><label><input type="checkbox" data-k="o2"><span>Rotate the API token and the SSH key.</span></label></li>
+    <li><label><input type="checkbox" data-k="o3"><span>Open ports 80/443 on one node, restricted to your own IP, and serve a web page from the cluster.</span></label></li>
+    <li><label><input type="checkbox" data-k="o4"><span>Write a pipeline that runs <code>terraform fmt</code>, <code>validate</code> and <code>ansible-lint</code> on every pull request.</span></label></li>
+  </ul>
+</section>
+
+<footer>
+  <p>Companion documents: <code>docs/GUIDE.md</code> (concepts) and <code>docs/WALKTHROUGH.md</code> (the same build as text). This page is a single file with no external scripts, so you can open it straight from disk. <a href="#top">Back to top</a></p>
+</footer>
+
+</main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var root = document.documentElement;
+
+  /* ---- safe storage ---- */
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+  /* ---- theme: system -> light -> dark ---- */
+  var themeBtn = document.getElementById("themeBtn");
+  var modes = ["system", "light", "dark"];
+  var mode = store("hc-theme") || "system";
+  if (modes.indexOf(mode) < 0) mode = "system";
+  function applyTheme() {
+    if (mode === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", mode);
+    themeBtn.textContent = "Theme: " + mode;
+  }
+  themeBtn.addEventListener("click", function () {
+    mode = modes[(modes.indexOf(mode) + 1) % modes.length];
+    store("hc-theme", mode); applyTheme();
+  });
+  applyTheme();
+
+  /* ---- mobile chapter menu ---- */
+  var rail = document.getElementById("rail"), menuBtn = document.getElementById("menuBtn");
+  menuBtn.addEventListener("click", function () {
+    var open = rail.classList.toggle("open"); menuBtn.setAttribute("aria-expanded", String(open));
+  });
+  rail.addEventListener("click", function (e) {
+    if (e.target.tagName === "A" && rail.classList.contains("open")) { rail.classList.remove("open"); menuBtn.setAttribute("aria-expanded", "false"); }
+  });
+
+  /* ---- scroll spy ---- */
+  var links = Array.prototype.slice.call(document.querySelectorAll(".rail a"));
+  var map = {}; links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+  var secs = Array.prototype.slice.call(document.querySelectorAll("main section"));
+  function spy() {
+    var cur = secs[0], y = window.scrollY + 140;
+    secs.forEach(function (s) { if (s.offsetTop <= y) cur = s; });
+    links.forEach(function (a) { a.classList.remove("on"); });
+    if (cur && map[cur.id]) map[cur.id].classList.add("on");
+  }
+  window.addEventListener("scroll", spy, { passive: true }); window.addEventListener("resize", spy); spy();
+
+  /* ---- copy buttons ---- */
+  Array.prototype.forEach.call(document.querySelectorAll(".copy"), function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = btn.closest(".code").querySelector("pre");
+      var text = pre.innerText.replace(/ /g, " ");
+      function done(ok) { btn.textContent = ok ? "Copied" : "Press Ctrl/Cmd+C"; setTimeout(function () { btn.textContent = "Copy"; }, 1600); }
+      function fallback() {
+        var r = document.createRange(); r.selectNodeContents(pre);
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); done(false);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+      } else { fallback(); }
+    });
+  });
+
+  /* ---- command filters ---- */
+  var fbtns = Array.prototype.slice.call(document.querySelectorAll("#cmdFilters button"));
+  var rows = Array.prototype.slice.call(document.querySelectorAll("#cmdTable tbody tr"));
+  fbtns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      fbtns.forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      var f = b.getAttribute("data-f");
+      rows.forEach(function (r) {
+        var show = f === "all" ||
+          (f === "chg" ? r.getAttribute("data-c") === "1" : (r.getAttribute("data-t") || "").split(" ").indexOf(f) >= 0);
+        r.hidden = !show;
+      });
+    });
+  });
+
+  /* ---- error search ---- */
+  var search = document.getElementById("errSearch"), errs = Array.prototype.slice.call(document.querySelectorAll("#errList .err"));
+  var none = document.getElementById("errNone");
+  search.addEventListener("input", function () {
+    var q = search.value.trim().toLowerCase(), n = 0;
+    errs.forEach(function (d) {
+      var hit = !q || d.textContent.toLowerCase().indexOf(q) >= 0;
+      d.hidden = !hit; if (hit) n++; if (q && hit) d.open = true;
+    });
+    none.hidden = n !== 0;
+  });
+
+  /* ---- practice checklist (saved in this browser) ---- */
+  var boxes = Array.prototype.slice.call(document.querySelectorAll("ul.check input"));
+  var saved = {}; try { saved = JSON.parse(store("hc-checks") || "{}") || {}; } catch (e) { saved = {}; }
+  function paint() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    document.getElementById("bar").style.width = (boxes.length ? Math.round(done * 100 / boxes.length) : 0) + "%";
+    document.getElementById("pct").textContent = done + " of " + boxes.length + " done";
+  }
+  boxes.forEach(function (b) {
+    b.checked = !!saved[b.getAttribute("data-k")];
+    b.addEventListener("change", function () {
+      saved[b.getAttribute("data-k")] = b.checked; store("hc-checks", JSON.stringify(saved)); paint();
+    });
+  });
+  paint();
+})();
+</script>
+</body>
+</html>

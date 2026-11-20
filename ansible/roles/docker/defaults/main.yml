@@ -1,0 +1,17 @@
+---
+# Docker Engine from Docker's official apt repository.
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Users allowed to run docker without sudo.
+# NOTE: membership in the docker group is effectively root access on the host.
+docker_users:
+  - "{{ common_admin_user | default('devops') }}"
+
+# Keep container logs from filling the small (35 GB) disk.
+docker_log_max_size: 10m
+docker_log_max_file: "3"

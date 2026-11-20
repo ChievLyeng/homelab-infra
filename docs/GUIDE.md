@@ -1,0 +1,329 @@
+# Homelab Infra: Concepts and Practice Guide
+
+A learning project for **Terraform**, **Ansible** and **Kubernetes** (k3s), run the way a real
+team would run it. This guide explains the *ideas* first, then how this repo uses them, then
+what to practise. It is not tied to one cloud provider.
+
+**Easier to read:** open [tutorial.html](tutorial.html) in a browser. It is the same material as a
+visual tutorial, with diagrams, copy buttons, a command filter and a practice checklist.
+
+**Next:** [WALKTHROUGH.md](WALKTHROUGH.md) follows the real build step by step: every command,
+which tool it starts, and which file does the work. Read this guide for the ideas, then the
+walkthrough next to the code.
+
+**Status of this repo** (update as you go)
+
+| Piece | State |
+|---|---|
+| Terraform: create 3 VMs through a provider API, sharing one private network | Working |
+| Terraform: generate the Ansible inventory | Working |
+| Ansible in a Docker container | Working |
+| Ansible `common` role (baseline hardening) | Working on all 3 nodes |
+| Ansible `k3s_server` / `k3s_agent` roles | Working: 3-node cluster, all `Ready` |
+| Deploying to the cluster (`make deploy`, manifests in `k8s/`) | Working |
+| Headlamp web UI (reached through an SSH tunnel) | Working |
+| Public web ports (80/443) and kubectl from a laptop | Not opened yet, on purpose |
+| GitHub Actions pipeline | Not written yet |
+
+---
+
+## 1. The big picture
+
+You want **a small Kubernetes cluster on 3 virtual machines**. Doing that by hand means
+clicking in a cloud console, logging in to each machine, and typing commands. It works once,
+and you can never repeat it exactly. So the work is split into three layers, and each layer
+has one tool:
+
+```
+ Layer 1  CREATE the machines        Terraform   "I want 3 VMs of this size"
+ Layer 2  CONFIGURE the machines     Ansible     "install and set up these things on them"
+ Layer 3  RUN applications on them   Kubernetes  "keep 3 copies of my app running"
+```
+
+Each layer is written as **code in files**. Run the code and you get the same result every
+time. Delete everything and run it again, and you get it back. That is called
+**infrastructure as code**, and it is the main idea of this project.
+
+```
+ you ──▶ Terraform ──▶ cloud provider API ──▶ 3 VMs exist
+                  └──▶ writes inventory file (a list of the VMs' addresses)
+ you ──▶ Ansible ──(SSH)──▶ each VM ──▶ hardened, k3s installed, nodes joined
+ you ──▶ kubectl ──▶ cluster ──▶ your app runs, spread over the nodes
+```
+
+---
+
+## 2. The three tools in plain words
+
+### Terraform: "what should exist"
+- You describe the machines you want in `.tf` files (name, size, operating system).
+- Terraform asks the cloud provider, through its **API**, to create them.
+- It remembers what it made in a **state file**. Next time it compares your files with that
+  memory and the real world, and changes only the difference.
+- Analogy: an architect's blueprint plus a site manager who checks the building against it.
+
+### Ansible: "how the machines should be set up"
+- You describe the desired setup in YAML files (install this, allow that port, enable this service).
+- Ansible connects to each machine over **SSH** and makes it match. Nothing needs to be
+  installed on the machines first.
+- Analogy: a checklist that a technician applies to every machine, skipping what is already done.
+
+### Kubernetes (k3s): "what should be running"
+- You tell the cluster "run 3 copies of this app". Kubernetes keeps that true: if a machine
+  dies, it starts the copies somewhere else.
+- **k3s** is a small, complete Kubernetes that fits on small machines. It has its own
+  container engine, so Docker is **not** needed on the nodes.
+
+### Why two tools for the machines?
+Terraform is good at **creating and deleting** things in a cloud. Ansible is good at the
+**inside of a machine**. Terraform connects the two by writing the list of machine addresses
+that Ansible reads, so they never disagree.
+
+---
+
+## 3. Vocabulary
+
+| Term | Meaning |
+|---|---|
+| **Provider** | The plugin that lets Terraform talk to one cloud's API. Different cloud, different provider. |
+| **API** | The cloud's "front door" for programs: the same actions as the web console, but callable by code. |
+| **API token** | A secret string that proves who you are to the API. Treat it like a password. |
+| **State** | Terraform's memory of what it created. Lose it and Terraform forgets your machines exist. |
+| **Plan** | A preview of what Terraform would change. Creates nothing. |
+| **Apply** | Actually make the changes. This is what costs money. |
+| **Destroy** | Delete everything Terraform manages. |
+| **Drift** | Reality no longer matches the code (someone changed something by hand). A plan shows it. |
+| **Module** | A reusable Terraform building block, such as "one VM". Used 3 times for 3 VMs. |
+| **Inventory** | The list of machines and groups Ansible should manage. Generated by Terraform here. |
+| **Playbook** | An Ansible file that says which roles run on which machines. |
+| **Role** | A reusable bundle of Ansible tasks, such as `common`. |
+| **Idempotent** | Running it again changes nothing if everything is already right. The most important Ansible property. |
+| **Dry run** (`--check`) | Ansible reports what it *would* change without changing it. |
+| **SSH key pair** | A private key (stays on your machine) and a public key (copied to the VM). Together they replace a password. |
+| **cloud-init** | A script a VM runs on its first boot. Used here to install your public key. |
+| **Control plane / server** | The brain of a Kubernetes cluster: it stores state and makes decisions. |
+| **Agent / worker** | A node that runs your application containers. |
+| **Join token** | A secret the server creates so agents can prove they may join. |
+| **Pod** | The smallest thing Kubernetes runs: one or more containers. |
+| **Deployment** | "Keep N copies of this pod running, and update them safely." |
+| **Private network** | A network only your VMs share. Cluster traffic should use it, not the internet. |
+
+---
+
+## 4. How this repo is organised
+
+```
+homelab-infra/
+├── Makefile                     # the command centre: make plan / infra / config / ...
+├── .env                         # your API URL + token (gitignored, never commit)
+├── .env.example                 # the same file with a placeholder
+├── docs/GUIDE.md                # this guide (concepts)
+├── docs/WALKTHROUGH.md          # step-by-step build, command → tool → file
+├── k8s/                         # Kubernetes manifests applied by `make deploy`
+├── terraform/
+│   ├── modules/vm/              # "one VM": the request sent to the provider's API
+│   └── envs/prod/               # the actual environment
+│       ├── main.tf              #   which VMs exist (the list), network sharing, inventory file
+│       ├── providers.tf         #   how to reach the API (URL + token)
+│       ├── variables.tf         #   settings you can change
+│       ├── outputs.tf           #   values printed after apply (IPs ...)
+│       └── inventory.tftpl      #   template for the Ansible inventory
+└── ansible/
+    ├── Dockerfile               # the container Ansible runs in (pinned versions)
+    ├── ansible.cfg              # Ansible settings
+    ├── requirements.yml         # extra Ansible modules (collections)
+    ├── inventories/prod/hosts.yml   # GENERATED by Terraform: do not edit by hand
+    ├── playbooks/site.yml       # "apply these roles to all machines"
+    └── roles/
+        ├── common/              # baseline: admin user, SSH hardening, firewall, swap ...
+        └── docker/              # written but unused: k3s does not need Docker
+```
+
+Rule of thumb: **if a file says "GENERATED", change its source, not the file.**
+
+---
+
+## 5. The workflow, step by step
+
+All commands run from the repo root.
+
+| Step | Command | What happens | Costs money? |
+|---|---|---|---|
+| 0 | put your token in `.env` | one-time setup | no |
+| 1 | `make check-api` | read-only test that the URL and token work | no |
+| 2 | `make plan` | preview: "5 to add" | no |
+| 3 | `make infra` and type `yes` | creates the VMs and writes the inventory | **yes** |
+| 4 | `make ansible-build` | builds the Ansible container image (once) | no |
+| 5 | `make ping` | can Ansible reach every VM? | no |
+| 6 | `make check` | dry run of the configuration | no |
+| 7 | `make config` | applies the configuration to every VM | no |
+| 8 | `make config` again | should report `changed=0` (proves idempotence) | no |
+| 9 | `make plan` again | should say "No changes" (proves no drift) | no |
+| 10 | `make destroy` and type `yes` | deletes everything | stops the cost |
+
+Always read the **plan** before you **apply**. The plan is your safety check.
+
+### What runs where
+- **Terraform** runs on your machine and talks to the cloud API over the internet.
+- **Ansible** runs inside a Docker container on your machine and talks to the VMs over SSH.
+  The private SSH key is mounted into the container read-only and is never copied into the image.
+- **Nothing special is installed on the VMs** for Terraform or Ansible. They only need SSH and
+  Python, which the OS image already has.
+
+### Why Ansible in a container?
+Everyone, and any automated pipeline, gets the exact same Ansible version. This is also how
+real teams run it in CI. The container starts, does its job, and is deleted
+(`docker run --rm`). That is why you do not see it in `docker ps`. The **image** stays.
+
+---
+
+## 6. The 3-node layout
+
+```
+        ┌────────────┐          ┌────────────┐          ┌────────────┐
+        │  k3s-01    │          │  k3s-02    │          │  k3s-03    │
+        │  server    │◀─ join ──│  agent     │          │  agent     │
+        │ (control   │◀────────────────────────── join ─│ (worker)   │
+        │  plane)    │          │            │          │            │
+        └────────────┘          └────────────┘          └────────────┘
+                     all three share one private network
+```
+
+- **Order matters.** Terraform creates the server first, waits for it to boot, reads which
+  private network it joined, then creates the agents *inside that same network*. That is what
+  `main.tf` does with `time_sleep` and a data lookup.
+- **Why one server and two agents?** A highly available control plane needs 3 servers and a lot
+  more memory. With 1 GB per machine, 1 + 2 is the realistic learning setup.
+- **Ansible then runs in one go:** `common` on all 3, then the k3s server role on the server,
+  then the k3s agent role on the agents. The join token is read from the server and handed to
+  the agents automatically. You never copy it by hand.
+
+---
+
+## 7. Design decisions and the reasons
+
+| Decision | Reason |
+|---|---|
+| Terraform generates the Ansible inventory | One source of truth for machine addresses |
+| `--check` before every real run | Preview before you change anything |
+| Create a new admin user instead of using the OS image's default | You control the account, and the default one can be locked out later |
+| Add a swap file | Machines with ~1 GB RAM stall without it |
+| Firewall on **both** layers | The cloud firewall (outside the VM) and the VM's own firewall (UFW) are separate. A port must be open in both. |
+| SSH: keys only, no root, no passwords | The most common attack is password guessing on port 22 |
+| fail2ban | Automatically blocks IPs that keep failing to log in |
+| Secrets in `.env`, outside git | A token in a repository is a leaked token |
+| No Docker on k3s nodes | k3s has its own container engine; Docker would waste scarce RAM |
+| Role variables prefixed (`common_...`) | Prevents two roles from accidentally sharing a variable name |
+
+---
+
+## 8. Secrets: the rules
+
+1. **Never** paste a token into chat, an issue, a commit or a `.tf` file.
+2. The token lives in `.env`, which `.gitignore` excludes. `.env.example` is the safe template.
+3. Terraform reads it from an environment variable (`TF_VAR_...`) that the Makefile sets from `.env`.
+4. Terraform state can contain sensitive values too. It is gitignored here. In a team it goes in
+   protected shared storage.
+5. If a secret leaks, **revoke it first** and create a new one. Deleting the commit is not enough.
+
+---
+
+## 9. What to practise
+
+Do these in order. Each one teaches a real operations skill.
+
+**Terraform**
+- [ ] Read a `plan` line by line and explain every `+`.
+- [ ] Change the VM size in `variables.tf`, run `plan`, and see whether it says *update* or *replace*.
+- [ ] Add a 4th agent to the list and apply it. Only the new machine should be created.
+- [ ] Remove it from the list and apply. Only that machine should be removed.
+- [ ] Change something by hand in the cloud console, run `plan`, and watch drift appear.
+
+**Ansible**
+- [ ] Run `make config` twice. The second run must say `changed=0`.
+- [ ] Add a package to `common_packages`, run `make check`, then `make config`.
+- [ ] Break something on a VM by hand (stop `fail2ban`), run `make config`, and watch it repair.
+- [ ] Use `ansible-lint` (`make lint-ansible`) and fix what it reports.
+
+**Kubernetes**
+- [ ] `kubectl get nodes` shows 3 nodes.
+- [ ] Deploy a sample app with 3 replicas and see which node each pod landed on.
+- [ ] Do a rolling update, then roll it back.
+- [ ] Shut down one VM. Watch the pods move. Start it again.
+
+**Operations**
+- [ ] `make destroy`, then `make infra` and `make config`: a full rebuild from nothing.
+- [ ] Rotate the API token and the SSH key.
+
+---
+
+## 10. From practice to production
+
+What a real team adds on top of exactly this code:
+
+| Practice (this repo) | Production |
+|---|---|
+| You run commands on your laptop | A pipeline (GitHub Actions, GitLab CI) runs them |
+| Changes go straight in | A pull request, a reviewer, and the `plan` posted on it |
+| State file on your machine | State in shared, locked, backed-up storage |
+| Token in `.env` | Token in the CI secret store, scoped and rotated |
+| One environment | `staging` and `prod`, each with its own state and credentials |
+| Ansible on your machine | Ansible in the same pinned container, run by the pipeline |
+| Manual `make destroy` | Protected: needs approval, and production is rarely destroyed |
+
+The Terraform and Ansible code does not change. Only *who runs it, and where* changes. A good
+first pipeline step is checks only: `terraform fmt`, `terraform validate` and `ansible-lint` on
+every pull request, with no secrets needed.
+
+---
+
+## 11. Using a different cloud provider
+
+The design isolates the cloud-specific part, so swapping provider is a contained change:
+
+| Part | Changes? |
+|---|---|
+| `terraform/modules/vm` (the VM request) | **Yes**: rewritten for the new provider |
+| `terraform/envs/prod/providers.tf` | **Yes**: new provider and credentials |
+| `terraform/envs/prod/main.tf` (list of VMs, network sharing) | Mostly: the network step depends on the provider |
+| `inventory.tftpl` | No |
+| All Ansible code | No |
+| k3s roles | No |
+
+If the new provider has an **official Terraform provider** (most big clouds do), the VM module
+gets *shorter*. This repo uses a generic REST-API provider only because the cloud used here has
+no dedicated one. With a dedicated provider you would not need the workarounds in this repo.
+
+Tell-tale signs that a provider needs the REST workaround: no entry in the Terraform Registry,
+but a documented HTTP API with token authentication.
+
+---
+
+## 12. Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| `422` / "field is required" from the API | The request is missing a field the API demands | Read the field name in the message and add it. Nothing was created. |
+| `403` / "invalid" on an object | Wrong ID, or the object is already gone | Check the object exists in the console or with a read-only API call |
+| `401` | Bad or expired token | Check `.env`, then `make check-api` |
+| `plan` wants to create something that exists | State is out of sync | Check state with `terraform state list`; `state rm` only a thing that is really gone |
+| SSH `Connection timed out` | Firewall (cloud layer or UFW) or the VM is still booting | Check both firewall layers and the VM state |
+| SSH `Permission denied (publickey)` | Wrong key or wrong user | Confirm user name and that the public key was installed on first boot |
+| Ansible dry run fails on a task that needs something to exist | A dry run cannot create the thing first | Expected; the role marks those tasks to tolerate it in `--check` |
+| Second `make config` shows changes | A task is not idempotent | Fix the task; this is a real bug in the role |
+| A delete through Terraform fails | The saved delete request in state is outdated | Fixing the code only affects *new* resources. For old ones, delete through the API, then `terraform state rm` |
+| Cluster pods stuck `Pending` | Not enough memory on 1 GB nodes | Lower replicas or requests; check swap |
+
+When something fails: **read the error message first**. Most API errors name the exact field
+or object that is wrong.
+
+---
+
+## 13. Cost habits
+
+- Machines are billed by the hour while they exist, even when idle.
+- When you are done for the day: `make destroy`. To come back: `make infra` and `make config`.
+  Rebuilding is part of the practice.
+- After a destroy, check the provider's console for leftovers (public IPs, volumes, networks).
+  Some providers keep them and keep billing.
+- Never run `apply` without reading the plan.

@@ -1,0 +1,30 @@
+# Headlamp: a web UI for the cluster. Browse every resource, read logs,
+# open a shell in a pod, and create or edit anything from YAML.
+#
+# k3s has a built-in Helm controller: applying this HelmChart object makes it
+# download and install the chart. No Helm program is needed on any machine.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: headlamp
+  namespace: kube-system
+spec:
+  repo: https://kubernetes-sigs.github.io/headlamp/
+  chart: headlamp
+  # Pinned on purpose: upgrades should be a deliberate change.
+  version: 0.46.0
+  targetNamespace: headlamp
+  createNamespace: true
+  valuesContent: |-
+    service:
+      # Reachable on port 30080 of every node. The cloud firewall keeps it closed
+      # to the internet; reach it through an SSH tunnel (make headlamp).
+      type: NodePort
+      nodePort: 30080
+    # Small limits: the worker nodes only have ~1 GB of RAM.
+    resources:
+      requests:
+        cpu: 20m
+        memory: 48Mi
+      limits:
+        memory: 128Mi

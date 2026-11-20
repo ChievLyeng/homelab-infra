@@ -1,0 +1,14 @@
+---
+# Keep application pods off the control plane: only system pods tolerate this taint.
+# The server has ~1 GB of RAM, so it should not also run your apps.
+k3s_server_taint_enabled: true
+
+# Built-in add-ons to switch off to save memory. Traefik (the ingress that will
+# serve ports 80/443) and the service load balancer stay ON.
+k3s_server_disabled_addons:
+  - metrics-server
+
+# Copy the admin kubeconfig to the controller so kubectl works from your Mac.
+# The file holds cluster-admin credentials: it stays in the gitignored folder.
+k3s_server_fetch_kubeconfig: true
+k3s_server_kubeconfig_dest: /work/ansible/.ansible/kubeconfig.yaml

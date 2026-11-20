@@ -1,0 +1,37 @@
+---
+# Order matters: every node gets the baseline, then the server starts the
+# cluster, then the agents join it using the token the server created.
+
+- name: Baseline configuration for all hosts
+  hosts: all
+  become: true
+  roles:
+    - common
+    # - docker   # not needed on k3s nodes: k3s ships its own containerd runtime
+
+- name: Kubernetes control plane
+  hosts: k3s_server
+  become: true
+  roles:
+    - k3s_server
+
+- name: Kubernetes workers join the cluster
+  hosts: k3s_agent
+  become: true
+  roles:
+    - k3s_agent
+
+- name: Verify the cluster
+  hosts: k3s_server
+  become: true
+  tasks:
+    - name: Wait until every node has joined and is Ready
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get nodes --no-headers
+      register: site_cluster_nodes
+      until: >-
+        (site_cluster_nodes.stdout_lines | length) == (groups['all'] | length)
+        and 'NotReady' not in site_cluster_nodes.stdout
+      retries: 30
+      delay: 10
+      changed_when: false
+      when: not ansible_check_mode
